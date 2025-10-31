@@ -6,7 +6,7 @@ export default function LoginPage() {
   return (
     <Container centerContent height="100vh" justifyContent="center">
       <Box p={8} borderWidth={1} borderRadius={8} boxShadow="lg" width="400px">
-        <VStack spacing={4}>
+        <VStack gap={4}>
           {/* Logo - 暂时用文字代替 */}
           <Heading size="lg" mb={6}>DAM System</Heading>
           
