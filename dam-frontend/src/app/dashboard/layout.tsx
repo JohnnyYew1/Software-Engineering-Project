@@ -1,128 +1,150 @@
 'use client'
-
-export const dynamic = 'force-dynamic'
-
-import { Box, Flex, VStack, Text, Button } from '@chakra-ui/react'
-import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-
-interface SafeUser {
-  username: string;
-  role: string;
-}
+import { 
+  Box, 
+  VStack, 
+  HStack, 
+  Text, 
+  Button
+} from '@chakra-ui/react'
+import { useRouter, usePathname } from 'next/navigation'
+import { authService } from '@/services/auth'
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const [mounted, setMounted] = useState(false)
-  const [user, setUser] = useState<SafeUser | null>(null)
+  const [currentUser, setCurrentUser] = useState<any>(null)
   const router = useRouter()
+  const pathname = usePathname()
 
   useEffect(() => {
-    setMounted(true)
-    // 安全地获取用户信息
-    try {
-      if (typeof window !== 'undefined') {
-        const userStr = localStorage.getItem('user')
-        if (userStr) {
-          const userData = JSON.parse(userStr)
-          setUser({
-            username: userData.username || 'User',
-            role: userData.role || 'viewer'
-          })
-        }
-      }
-    } catch (error) {
-      console.error('Failed to get user data:', error)
+    const user = authService.getCurrentUser()
+    setCurrentUser(user)
+    
+    // 如果未登录，重定向到登录页
+    if (!user) {
+      router.push('/login')
     }
-  }, [])
+  }, [router])
 
-  const handleLogout = () => {
-    // 安全地清除存储并重定向
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+  const handleLogout = async () => {
+    await authService.logout()
+  }
+
+  // 根据用户角色生成菜单项
+  const getMenuItems = () => {
+    const baseItems = [
+      { name: 'Dashboard', path: '/dashboard', roles: ['admin', 'editor', 'viewer'] },
+      { name: 'Assets', path: '/dashboard/assets', roles: ['admin', 'editor', 'viewer'] },
+      { name: 'My Profile', path: '/dashboard/profile', roles: ['admin', 'editor', 'viewer'] },
+    ]
+
+    // 只有 Editor 角色可以看到 Upload
+    if (currentUser?.role === 'editor') {
+      baseItems.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] })
+    }
+
+    // 只有 Admin 角色可以看到 User Management
+    if (currentUser?.role === 'admin') {
+      baseItems.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] })
+    }
+
+    return baseItems.filter(item => item.roles.includes(currentUser?.role))
+  }
+
+  // 获取角色描述
+  const getRoleDescription = () => {
+    switch (currentUser?.role) {
+      case 'admin':
+        return 'System Administrator - Manage users and all assets'
+      case 'editor':
+        return 'Content Editor - Upload and manage your own assets'
+      case 'viewer':
+        return 'Viewer - Browse and download assets'
+      default:
+        return ''
     }
   }
 
-  if (!mounted) {
+  if (!currentUser) {
     return (
-      <div style={{ display: 'flex', height: '100vh' }}>
-        <div style={{ width: '250px', backgroundColor: '#f7fafc', padding: '16px' }}>
-          <div>Loading...</div>
-        </div>
-        <div style={{ flex: 1, padding: '32px' }}>
-          {children}
-        </div>
-      </div>
+      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center">
+        <Text>Redirecting to login...</Text>
+      </Box>
     )
   }
 
   return (
-    <Flex height="100vh">
-      <Box width="250px" bg="gray.100" p={4}>
-        <VStack align="stretch" gap={4}>
-          <Text fontSize="xl" fontWeight="bold" mb={6}>DAM System</Text>
-          
-          {user && (
-            <Text fontSize="sm" color="gray.600" mb={2}>
-              Welcome, {user.username}
+    <Box minH="100vh" bg="gray.50">
+      <HStack align="start" gap={0}>
+        {/* 侧边栏 */}
+        <Box 
+          w="250px" 
+          bg="white" 
+          minH="100vh" 
+          p={4} 
+          boxShadow="md"
+        >
+          <VStack align="stretch" gap={6}>
+            <Text fontSize="xl" fontWeight="bold" mb={4}>
+              DAM System
             </Text>
-          )}
-          
-          {/* Dashboard 链接 */}
-          <Button 
-            variant="ghost" 
-            justifyContent="flex-start"
-            onClick={() => router.push('/dashboard')}
-          >
-            Dashboard
-          </Button>
-          
-          {/* Assets 链接 */}
-          <Button 
-            variant="ghost" 
-            justifyContent="flex-start"
-            onClick={() => router.push('/dashboard/assets')}
-          >
-            Assets
-          </Button>
-          
-          {/* Upload 链接 */}
-          <Button 
-            variant="ghost" 
-            justifyContent="flex-start"
-            onClick={() => router.push('/dashboard/upload')}
-          >
-            Upload
-          </Button>
-          
-          {/* My Profile 链接 */}
-          <Button 
-            variant="ghost" 
-            justifyContent="flex-start"
-            onClick={() => router.push('/dashboard/profile')}
-          >
-            My Profile
-          </Button>
-          
-          {/* Log Out 按钮 */}
-          <Button 
-            variant="outline" 
-            mt="auto"
-            onClick={handleLogout}
-          >
-            Log Out
-          </Button>
-        </VStack>
-      </Box>
+            
+            <Box>
+              <Text fontSize="sm" color="gray.600" mb={1}>
+                Welcome, {currentUser?.first_name || currentUser?.username}
+              </Text>
+              <Text 
+                fontSize="xs" 
+                color={
+                  currentUser?.role === 'admin' ? 'red.500' : 
+                  currentUser?.role === 'editor' ? 'blue.500' : 'green.500'
+                }
+                fontWeight="bold"
+                mb={1}
+              >
+                Role: {currentUser?.role?.toUpperCase()}
+              </Text>
+              <Text fontSize="xs" color="gray.500">
+                {getRoleDescription()}
+              </Text>
+            </Box>
 
-      <Box flex={1} p={8}>
-        {children}
-      </Box>
-    </Flex>
+            <VStack align="stretch" gap={2}>
+              {getMenuItems().map((item) => (
+                <Button
+                  key={item.path}
+                  variant={pathname === item.path ? 'solid' : 'ghost'}
+                  colorScheme={pathname === item.path ? 'blue' : 'gray'}
+                  justifyContent="start"
+                  onClick={() => router.push(item.path)}
+                  size="sm"
+                >
+                  {item.name}
+                </Button>
+              ))}
+              
+              <Button
+                variant="ghost"
+                colorScheme="red"
+                justifyContent="start"
+                onClick={handleLogout}
+                mt={4}
+                size="sm"
+              >
+                Log Out
+              </Button>
+            </VStack>
+          </VStack>
+        </Box>
+
+        {/* 主内容区域 */}
+        <Box flex={1} p={6}>
+          {children}
+        </Box>
+      </HStack>
+    </Box>
   )
 }

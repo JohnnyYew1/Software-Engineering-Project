@@ -1,96 +1,89 @@
-import { api } from '@/lib/api';
+import { apiRequest } from '@/lib/api';
 
 export interface Asset {
   id: number;
   name: string;
   asset_no: string;
   brand: string;
-  asset_type: string;
+  asset_type: 'image' | '3d_model' | 'video';
   file: string;
   upload_date: string;
   description: string;
-  uploaded_by: number;
-  tags: string[];
+  uploaded_by: {
+    username: string;
+    first_name: string;
+    last_name: string;
+  };
+  tags: Array<{
+    id: number;
+    name: string;
+    color: string;
+  }>;
   view_count: number;
 }
 
-export interface AssetCreateData {
+export interface Tag {
+  id: number;
   name: string;
-  asset_no: string;
-  brand: string;
-  asset_type: string;
-  file: File;
-  description: string;
-  tags: number[];
+  color: string;
 }
 
 export const assetService = {
-  async getAssets(): Promise<Asset[]> {
-    // ???? - ??????? API ??
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve([
-          {
-            id: 1,
-            name: 'Sample Image',
-            asset_no: 'AST001',
-            brand: 'Nikon',
-            asset_type: 'image',
-            file: '/assets/sample.jpg',
-            upload_date: '2024-01-15T10:30:00Z',
-            description: 'A sample image',
-            uploaded_by: 1,
-            tags: ['photo', 'sample'],
-            view_count: 15
-          },
-          {
-            id: 2,
-            name: '3D Model',
-            asset_no: 'AST002',
-            brand: 'Blender',
-            asset_type: '3d-model',
-            file: '/assets/model.glb',
-            upload_date: '2024-01-14T14:20:00Z',
-            description: 'A 3D model asset',
-            uploaded_by: 1,
-            tags: ['3d', 'model'],
-            view_count: 8
-          }
-        ]);
-      }, 500);
-    });
+  // 获取所有资产
+  async getAssets(search?: string, sort?: string, tags?: string): Promise<Asset[]> {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (sort) params.append('sort', sort);
+    if (tags) params.append('tags', tags);
+    
+    const queryString = params.toString();
+    const endpoint = queryString ? `/assets/?${queryString}` : '/assets/';
+    
+    return await apiRequest(endpoint);
   },
 
+  // 获取单个资产
   async getAsset(id: number): Promise<Asset> {
-    return api.get(`/assets/${id}/`);
+    return await apiRequest(`/assets/${id}/`);
   },
 
-  async createAsset(assetData: AssetCreateData): Promise<Asset> {
-    const formData = new FormData();
-    
-    formData.append('file', assetData.file);
-    formData.append('name', assetData.name);
-    formData.append('asset_no', assetData.asset_no);
-    formData.append('brand', assetData.brand);
-    formData.append('asset_type', assetData.asset_type);
-    formData.append('description', assetData.description);
-    
-    assetData.tags.forEach(tagId => {
-      formData.append('tags', tagId.toString());
+  // 创建资产（文件上传）
+  async createAsset(formData: FormData): Promise<Asset> {
+    const response = await fetch('http://127.0.0.1:8000/api/assets/', {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
     });
 
-    return api.upload('/assets/', formData);
+    if (!response.ok) {
+      throw new Error('Failed to create asset');
+    }
+
+    return await response.json();
   },
 
-  async updateAsset(id: number, assetData: Partial<Asset>): Promise<Asset> {
-    return api.put(`/assets/${id}/`, assetData);
+  // 更新资产
+  async updateAsset(id: number, data: Partial<Asset>): Promise<Asset> {
+    return await apiRequest(`/assets/${id}/`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
   },
 
+  // 删除资产
   async deleteAsset(id: number): Promise<void> {
-    return api.delete(`/assets/${id}/`);
+    await apiRequest(`/assets/${id}/`, {
+      method: 'DELETE',
+    });
   },
 
-  async searchAssets(query: string): Promise<Asset[]> {
-    return api.get(`/assets/?search=${encodeURIComponent(query)}`);
+  // 获取所有标签
+  async getTags(): Promise<Tag[]> {
+    return await apiRequest('/tags/');
   },
+
+  // 搜索资产
+  async searchAssets(query: string): Promise<Asset[]> {
+    return await apiRequest(`/assets/?search=${encodeURIComponent(query)}`);
+  }
 };

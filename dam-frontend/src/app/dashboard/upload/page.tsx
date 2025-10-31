@@ -1,7 +1,4 @@
-
 'use client'
-export const dynamic = 'force-dynamic'
-// 现有代码保持不变
 import { 
   Heading, 
   VStack, 
@@ -13,18 +10,37 @@ import {
   HStack
 } from '@chakra-ui/react'
 import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { permissions } from '@/utils/permissions'
 
 export default function UploadPage() {
-  const [mounted, setMounted] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null)
+  const [assetData, setAssetData] = useState({
+    name: '',
+    description: '',
+    tags: '',
+    brand: '',
+    assetNo: ''
+  })
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
 
+  // 权限检查
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    if (!permissions.canUpload()) {
+      setMessage({
+        type: 'error',
+        text: 'Access denied. You do not have permission to upload assets. Redirecting to assets page...'
+      })
+      // 3秒后重定向到资产页面
+      setTimeout(() => {
+        router.push('/dashboard/assets')
+      }, 3000)
+    }
+  }, [router])
 
   useEffect(() => {
     if (message) {
@@ -52,17 +68,25 @@ export default function UploadPage() {
   }
 
   const handleFileSelect = (file: File) => {
-    const validTypes = ['image/jpeg', 'image/png', 'model/gltf-binary', 'application/octet-stream']
+    // 支持的文件类型：图片(JPG, PNG), 3D模型(GLB), 视频(MP4)
+    const validExtensions = ['jpg', 'jpeg', 'png', 'glb', 'mp4']
     const fileExtension = file.name.split('.').pop()?.toLowerCase()
-    const validExtensions = ['jpg', 'jpeg', 'png', 'glb', 'obj', 'fbx']
     
-    if (validTypes.includes(file.type) || validExtensions.includes(fileExtension || '')) {
+    if (fileExtension && validExtensions.includes(fileExtension)) {
       setSelectedFile(file)
+      
+      // 自动填充资产名称（使用文件名去掉扩展名）
+      const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "")
+      setAssetData(prev => ({
+        ...prev,
+        name: prev.name || fileNameWithoutExt
+      }))
+      
       setMessage(null)
     } else {
       setMessage({
         type: 'error',
-        text: 'Please upload photos (JPG, PNG) or 3D models (GLB, OBJ, FBX)'
+        text: 'Please upload supported file types: JPG, PNG, GLB (3D models), or MP4 (videos)'
       })
     }
   }
@@ -74,36 +98,106 @@ export default function UploadPage() {
     }
   }
 
+  const handleInputChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setAssetData(prev => ({
+      ...prev,
+      [field]: e.target.value
+    }))
+  }
+
   const handleUpload = async () => {
-    if (!selectedFile) return
-    
-    setUploading(true)
-    setTimeout(() => {
-      setUploading(false)
-      setSelectedFile(null)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+    if (!selectedFile) {
       setMessage({
-        type: 'success',
-        text: `${selectedFile.name} has been uploaded successfully`
+        type: 'error',
+        text: 'Please select a file to upload'
       })
-    }, 2000)
+      return
+    }
+
+    if (!assetData.name.trim()) {
+      setMessage({
+        type: 'error',
+        text: 'Please enter an asset name'
+      })
+      return
+    }
+
+    setUploading(true)
+    
+    try {
+      // 这里将连接到真实的后端 API
+      // 暂时保持模拟上传
+      setTimeout(() => {
+        setUploading(false)
+        setSelectedFile(null)
+        setAssetData({
+          name: '',
+          description: '',
+          tags: '',
+          brand: '',
+          assetNo: ''
+        })
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
+        setMessage({
+          type: 'success',
+          text: `${selectedFile.name} has been uploaded successfully`
+        })
+      }, 2000)
+    } catch (error) {
+      setUploading(false)
+      setMessage({
+        type: 'error',
+        text: 'Upload failed. Please try again.'
+      })
+    }
   }
 
   const handleClear = () => {
     setSelectedFile(null)
+    setAssetData({
+      name: '',
+      description: '',
+      tags: '',
+      brand: '',
+      assetNo: ''
+    })
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
     setMessage(null)
   }
 
-  if (!mounted) {
+  // 获取文件类型显示名称
+  const getFileTypeDisplay = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    if (['jpg', 'jpeg', 'png'].includes(ext || '')) return 'Image'
+    if (ext === 'glb') return '3D Model'
+    if (ext === 'mp4') return 'Video'
+    return 'File'
+  }
+
+  // 如果用户没有上传权限，显示错误信息
+  if (!permissions.canUpload()) {
     return (
       <VStack align="stretch" gap={6}>
         <Heading>Upload Asset</Heading>
-        <Text>Loading...</Text>
+        <Box 
+          bg="red.50" 
+          color="red.800"
+          p={4} 
+          borderRadius="md" 
+          borderWidth="1px"
+          borderColor="red.200"
+          textAlign="center"
+        >
+          <Text fontWeight="bold" mb={2}>Access Denied</Text>
+          <Text>
+            You do not have permission to upload assets. Only Editor role can upload assets. 
+            Redirecting to assets page...
+          </Text>
+        </Box>
       </VStack>
     )
   }
@@ -150,7 +244,7 @@ export default function UploadPage() {
             }
           </Text>
           <Text fontSize="sm" color="gray.500">
-            Supports: JPG, PNG, GLB, OBJ, FBX
+            Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos)
           </Text>
           {!selectedFile && (
             <Button colorScheme="blue">
@@ -163,7 +257,7 @@ export default function UploadPage() {
           type="file"
           ref={fileInputRef}
           onChange={handleFileInput}
-          accept=".jpg,.jpeg,.png,.glb,.obj,.fbx"
+          accept=".jpg,.jpeg,.png,.glb,.mp4"
           display="none"
         />
       </Box>
@@ -176,24 +270,57 @@ export default function UploadPage() {
             <Text fontWeight="medium" mb={2}>Selected File:</Text>
             <Text color="gray.600">{selectedFile.name}</Text>
             <Text fontSize="sm" color="gray.500">
+              Type: {getFileTypeDisplay(selectedFile.name)} | 
               Size: {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
             </Text>
           </Box>
 
           <VStack align="stretch" gap={3}>
             <Box>
-              <Text fontWeight="medium" mb={2}>Asset Name</Text>
-              <Input placeholder="Enter asset name" />
+              <Text fontWeight="medium" mb={2}>Asset Name *</Text>
+              <Input 
+                placeholder="Enter asset name" 
+                value={assetData.name}
+                onChange={handleInputChange('name')}
+              />
             </Box>
+
+            <HStack gap={4}>
+              <Box flex={1}>
+                <Text fontWeight="medium" mb={2}>Asset Number</Text>
+                <Input 
+                  placeholder="Enter asset number" 
+                  value={assetData.assetNo}
+                  onChange={handleInputChange('assetNo')}
+                />
+              </Box>
+              <Box flex={1}>
+                <Text fontWeight="medium" mb={2}>Brand</Text>
+                <Input 
+                  placeholder="Enter brand" 
+                  value={assetData.brand}
+                  onChange={handleInputChange('brand')}
+                />
+              </Box>
+            </HStack>
 
             <Box>
               <Text fontWeight="medium" mb={2}>Description</Text>
-              <Textarea placeholder="Describe this asset..." rows={4} />
+              <Textarea 
+                placeholder="Describe this asset..." 
+                rows={4}
+                value={assetData.description}
+                onChange={handleInputChange('description')}
+              />
             </Box>
 
             <Box>
               <Text fontWeight="medium" mb={2}>Tags</Text>
-              <Input placeholder="Add tags (comma separated)" />
+              <Input 
+                placeholder="Add tags (comma separated)" 
+                value={assetData.tags}
+                onChange={handleInputChange('tags')}
+              />
             </Box>
 
             <HStack gap={4} mt={4}>

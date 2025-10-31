@@ -1,75 +1,28 @@
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
-export const api = {
-  getHeaders() {
-    const token = localStorage.getItem('auth_token');
-    return {
+// 通用的 API 请求函数
+export async function apiRequest(endpoint: string, options: RequestInit = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  
+  const config: RequestInit = {
+    headers: {
       'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Token ${token}` }),
-    };
-  },
+      ...options.headers,
+    },
+    credentials: 'include', // 包含 cookies 用于认证
+    ...options,
+  };
 
-  async request(endpoint: string, options: RequestInit = {}) {
-    const url = `${API_BASE_URL}${endpoint}`;
-    const config = {
-      headers: this.getHeaders(),
-      ...options,
-    };
-
-    try {
-      const response = await fetch(url, config);
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('API request failed:', error);
-      throw error;
-    }
-  },
-
-  async get(endpoint: string) {
-    return this.request(endpoint, { method: 'GET' });
-  },
-
-  async post(endpoint: string, data: any) {
-    return this.request(endpoint, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  async put(endpoint: string, data: any) {
-    return this.request(endpoint, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  },
-
-  async delete(endpoint: string) {
-    return this.request(endpoint, { method: 'DELETE' });
-  },
-
-  async upload(endpoint: string, formData: FormData) {
-    const url = `${API_BASE_URL}${endpoint}`;
-    const token = localStorage.getItem('auth_token');
+  try {
+    const response = await fetch(url, config);
     
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          ...(token && { 'Authorization': `Token ${token}` }),
-        },
-        body: formData,
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}`);
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Upload failed:', error);
-      throw error;
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
-  },
-};
+    
+    return await response.json();
+  } catch (error) {
+    console.error('API request failed:', error);
+    throw error;
+  }
+}
