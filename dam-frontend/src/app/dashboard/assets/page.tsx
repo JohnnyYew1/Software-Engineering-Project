@@ -1,7 +1,7 @@
-
-
 'use client'
+
 export const dynamic = 'force-dynamic'
+
 import { 
   Heading, 
   VStack, 
@@ -11,14 +11,30 @@ import {
   Box,
   Text
 } from '@chakra-ui/react'
+import { useState, useEffect } from 'react'
 
 export default function AssetsPage() {
+  const [mounted, setMounted] = useState(false)
+  
   // 模拟资产数据
   const assets = [
     { id: 1, name: 'Company Logo', assetNo: 'AST001', brand: 'Nike', type: 'Image', uploadDate: '2024-01-15', user: 'John Doe' },
     { id: 2, name: 'Product Catalog', assetNo: 'AST002', brand: 'Apple', type: 'Document', uploadDate: '2024-01-14', user: 'Jane Smith' },
     { id: 3, name: 'Marketing Video', assetNo: 'AST003', brand: 'Samsung', type: 'Video', uploadDate: '2024-01-13', user: 'Mike Johnson' },
   ]
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) {
+    return (
+      <VStack align="stretch" gap={6}>
+        <Heading>Assets</Heading>
+        <Text>Loading...</Text>
+      </VStack>
+    )
+  }
 
   return (
     <VStack align="stretch" gap={6}>
@@ -28,13 +44,11 @@ export default function AssetsPage() {
       <HStack gap={4}>
         <Input placeholder="Search assets..." flex={1} />
         
-        {/* 使用原生 select 替代 Chakra Select */}
         <Box as="select" borderWidth="1px" borderRadius="md" p={2} width="200px" bg="white">
           <option value="">Filter by type</option>
           <option value="image">Image</option>
           <option value="3d-model">3D Model</option>
           <option value="document">Document</option>
-          <option value="video">Video</option>
         </Box>
         
         <Box as="select" borderWidth="1px" borderRadius="md" p={2} width="200px" bg="white">
@@ -44,7 +58,7 @@ export default function AssetsPage() {
         </Box>
       </HStack>
 
-      {/* 使用简单的 Box 布局替代 Table */}
+      {/* 资产列表 */}
       <VStack align="stretch" gap={4}>
         {/* 表头 */}
         <HStack bg="gray.50" p={4} borderRadius="md" fontWeight="bold">
