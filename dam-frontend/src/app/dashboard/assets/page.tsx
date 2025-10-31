@@ -1,5 +1,7 @@
-'use client'
 
+
+'use client'
+export const dynamic = 'force-dynamic'
 import { 
   Heading, 
   VStack, 
@@ -30,9 +32,9 @@ export default function AssetsPage() {
         <Box as="select" borderWidth="1px" borderRadius="md" p={2} width="200px" bg="white">
           <option value="">Filter by type</option>
           <option value="image">Image</option>
+          <option value="3d-model">3D Model</option>
           <option value="document">Document</option>
           <option value="video">Video</option>
-          <option value="audio">Audio</option>
         </Box>
         
         <Box as="select" borderWidth="1px" borderRadius="md" p={2} width="200px" bg="white">
