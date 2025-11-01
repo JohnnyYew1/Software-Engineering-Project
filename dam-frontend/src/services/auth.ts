@@ -66,9 +66,8 @@ export const authService = {
     }
   },
 
-  
   // 登出
- async logout(): Promise<void> {
+  async logout(): Promise<void> {
     try {
       // 调用后端注销API
       await fetch('http://127.0.0.1:8000/api/logout/', {
@@ -105,5 +104,66 @@ export const authService = {
   getCurrentUserRole(): string | null {
     const user = this.getCurrentUser();
     return user ? user.role : null;
+  },
+
+  // 测试连接（调试用）
+  async testConnection(): Promise<{ success: boolean; error?: string }> {
+    try {
+      // 简单的连接测试
+      const response = await fetch('http://127.0.0.1:8000/api/', {
+        method: 'GET',
+        credentials: 'include',
+      });
+      
+      if (response.ok) {
+        return { success: true };
+      } else {
+        return { 
+          success: false, 
+          error: `Backend responded with status: ${response.status}` 
+        };
+      }
+    } catch (error) {
+      console.error('Connection test failed:', error);
+      return { 
+        success: false, 
+        error: `Cannot connect to backend: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      };
+    }
+  },
+
+  // 测试认证端点（调试用）
+  async testAuthEndpoint(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/login/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: 'test',
+          password: 'test'
+        }),
+        credentials: 'include',
+      });
+
+      // 即使登录失败，只要端点响应就说明认证端点可用
+      if (response.status === 400 || response.status === 401) {
+        return { success: true }; // 端点存在，只是认证失败
+      } else if (response.ok) {
+        return { success: true };
+      } else {
+        return { 
+          success: false, 
+          error: `Auth endpoint responded with status: ${response.status}` 
+        };
+      }
+    } catch (error) {
+      console.error('Auth endpoint test failed:', error);
+      return { 
+        success: false, 
+        error: `Cannot connect to auth endpoint: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      };
+    }
   }
 };
