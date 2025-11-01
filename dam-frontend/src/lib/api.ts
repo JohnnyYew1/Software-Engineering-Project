@@ -1,28 +1,34 @@
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
-
-// 通用的 API 请求函数
-export async function apiRequest(endpoint: string, options: RequestInit = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
+export async function apiRequest<T = any>(
+  endpoint: string, 
+  options: RequestInit = {}
+): Promise<T> {
+  const baseURL = 'http://127.0.0.1:8000/api';
+  const url = `${baseURL}${endpoint}`;
   
-  const config: RequestInit = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    credentials: 'include', // 包含 cookies 用于认证
-    ...options,
-  };
+  console.log(`🔄 API Request: ${url}`);
 
   try {
-    const response = await fetch(url, config);
+    const response = await fetch(url, {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+    
+    console.log(`📡 Response Status: ${response.status}`);
     
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const text = await response.text();
+      console.error(`❌ API Error ${response.status}:`, text);
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
-    return await response.json();
+    const data = await response.json();
+    console.log('✅ API Success:', data);
+    return data;
   } catch (error) {
-    console.error('API request failed:', error);
+    console.error('❌ API Request Failed:', error);
     throw error;
   }
 }
