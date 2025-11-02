@@ -1,240 +1,161 @@
-from django.shortcuts import render, get_object_or_404
-from django.contrib.auth.models import User
 from django.contrib.auth import authenticate, login, logout
-from rest_framework import viewsets, permissions, status
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.http import JsonResponse, FileResponse
+import mimetypes
+import os
+import urllib.parse
+
+from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from django.http import HttpResponse
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
 from .models import Asset, Tag, UserProfile
 from .serializers import AssetSerializer, TagSerializer, UserProfileSerializer
-from django.http import FileResponse
-import os
+from .permissions import AssetPermission  # ✅ 保留你自定义权限
 
-# ViewSets for API
 
-class AssetViewSet(viewsets.ModelViewSet):
-    queryset = Asset.objects.all()
-    serializer_class = AssetSerializer  # 保持原样，但我们添加调试端点
+@ensure_csrf_cookie
+def csrf(request):
+    """给前端种 CSRF Cookie（仅 Session 场景需要）"""
+    return JsonResponse({"ok": True})
 
-@action(detail=False, methods=['get'])
-def debug_list(self, request):
-    """调试端点：返回简单的资产信息"""
-    assets = Asset.objects.all()
-    
-    # 使用简单的字典而不是序列化器
-    assets_data = []
-    for asset in assets:
-        assets_data.append({
-            'id': asset.id,
-            'name': asset.name,
-            'asset_no': asset.asset_no,
-            'asset_type': asset.asset_type,
-            'file_url': asset.file.url if asset.file else None,
-        })
-    
+
+# ----------------------- Auth（兼容 Session / 保留） -----------------------
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def user_login(request):
+    username = request.data.get("username")
+    password = request.data.get("password")
+    if not username or not password:
+        return Response({"success": False, "error": "Username and password are required."}, status=400)
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return Response({"success": False, "error": "Invalid credentials."}, status=401)
+    login(request, user)
+    role = getattr(getattr(user, "userprofile", None), "role", "viewer")
     return Response({
-        'count': assets.count(),
-        'assets': assets_data
+        "success": True,
+        "user": {"id": user.id, "username": user.username, "role": role}
     })
-    def get_queryset(self):
-        # 根据用户角色返回相应的资产
-        user = self.request.user
-        if not user.is_authenticated:
-            return Asset.objects.none()
-        
-        try:
-            user_profile = user.userprofile
-            if user_profile.role == 'admin':
-                return Asset.objects.all()
-            else:
-                # editor 和 viewer 可以看到所有资产，但编辑权限不同
-                return Asset.objects.all()
-        except UserProfile.DoesNotExist:
-            return Asset.objects.none()
 
-@action(detail=True, methods=['get'])
-@permission_classes([permissions.IsAuthenticated])
-def preview(self, request, pk=None):
-    """图片预览端点"""
-    asset = get_object_or_404(Asset, pk=pk)
-    
-    if asset.asset_type != 'image':
-        return Response({'error': 'Preview only available for images'}, status=400)
-    
-    # 确保文件存在
-    if not asset.file:
-        return Response({'error': 'File not found'}, status=404)
-    
-    try:
-        # 获取文件路径
-        file_path = asset.file.path
-        
-        # 检查文件是否存在
-        if not os.path.exists(file_path):
-            return Response({'error': 'File does not exist on server'}, status=404)
-        
-        # 打开文件
-        file = open(file_path, 'rb')
-        
-        # 创建响应（inline 显示而不是下载）
-        response = FileResponse(file, content_type='image/jpeg')
-        response['Content-Disposition'] = f'inline; filename="{os.path.basename(file_path)}"'
-        
-        # 增加查看次数
-        asset.view_count += 1
-        asset.save()
-        
-        return response
-        
-    except Exception as e:
-        print(f"Preview error: {str(e)}")
-        return Response({'error': f'Preview failed: {str(e)}'}, status=500)
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def user_logout(request):
+    logout(request)
+    return Response({"success": True})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_current_user(request):
+    user = request.user
+    role = getattr(getattr(user, "userprofile", None), "role", "viewer")
+    return Response({
+        "id": user.id,
+        "username": user.username,
+        "role": role,
+        "is_active": user.is_active
+    })
+
+
+# ----------------------- 资源 -----------------------
+class AssetViewSet(viewsets.ModelViewSet):
+    queryset = Asset.objects.all().select_related("uploaded_by").prefetch_related("tags")
+    serializer_class = AssetSerializer
+    permission_classes = [AssetPermission]  # ✅ 使用你自定义权限
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    search_fields = ["name", "description", "tags__name"]
+
+    # ⚠ 修复 created_at：仅保留模型真实字段，并增强 upload_date 支持范围过滤
+    filterset_fields = {
+        "asset_type": ["exact"],
+        "uploaded_by": ["exact"],
+        "upload_date": ["exact", "gte", "lte"],
+        "tags": ["exact"],
+    }
+
+    ordering_fields = ["upload_date", "name"]
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
+
+    def perform_create(self, serializer):
+        serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated])
+    def preview(self, request, pk=None):
+        """返回可预览的文件 URL（绝对地址）"""
+        asset = self.get_object()
+        if not asset.file:
+            return Response({"detail": "No file"}, status=404)
+        return Response({"file_url": request.build_absolute_uri(asset.file.url)})
+
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated])
+    def download_url(self, request, pk=None):
+        """
+        兼容旧前端：返回直链（会在新标签打开，不一定触发保存）
+        """
+        asset = self.get_object()
+        if not asset.file:
+            return Response({"detail": "No file"}, status=404)
+        return Response({"url": request.build_absolute_uri(asset.file.url)})
+
+    @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated], url_path="download")
+    def download(self, request, pk=None):
+        """
+        ✅ 真正的「下载接口」：以附件形式返回二进制流，带 Content-Disposition。
+        —— 前端用 fetch 携带 JWT，拿到 blob 后触发保存。
+        """
+        asset = self.get_object()
+        if not asset.file:
+            return Response({"detail": "No file"}, status=404)
+
+        # 计算文件名：优先用资产名，否则用文件名
+        base_name = (asset.name or os.path.basename(asset.file.name)).strip()
+        # 如果没有扩展名，尝试从真实文件名补上
+        root, ext = os.path.splitext(base_name)
+        if not ext:
+            _, real_ext = os.path.splitext(asset.file.name)
+            base_name = root + real_ext
+
+        # MIME 类型
+        mime, _ = mimetypes.guess_type(asset.file.name)
+        mime = mime or "application/octet-stream"
+
+        # 自增下载次数
+        asset.download_count = (asset.download_count or 0) + 1
+        asset.save(update_fields=["download_count"])
+
+        # 以附件方式返回
+        resp = FileResponse(asset.file.open("rb"), as_attachment=True, filename=base_name)
+        resp["Content-Type"] = mime
+        # 兼容 UTF-8 文件名（RFC 5987）
+        quoted = urllib.parse.quote(base_name)
+        resp["Content-Disposition"] = f"attachment; filename*=UTF-8''{quoted}"
+        return resp
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def increase_download(self, request, pk=None):
+        asset = self.get_object()
+        asset.download_count = (asset.download_count or 0) + 1
+        asset.save(update_fields=["download_count"])
+        return Response({"download_count": asset.download_count})
+
+
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticated]
 
-class UserProfileViewSet(viewsets.ModelViewSet):
-    queryset = UserProfile.objects.all()
+
+class UserProfileViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = UserProfile.objects.select_related("user").all()
     serializer_class = UserProfileSerializer
-    permission_classes = [permissions.AllowAny]
-
-# Authentication views
-@api_view(['POST'])
-@permission_classes([permissions.AllowAny])
-def user_login(request):
-    username = request.data.get('username')
-    password = request.data.get('password')
-    
-    # 检查用户名和密码是否提供
-    if not username or not password:
-        return Response({
-            'success': False,
-            'error': 'Username and password are required.'
-        }, status=400)
-    
-    user = authenticate(request, username=username, password=password)
-    
-    if user is not None:
-        login(request, user)
-        try:
-            user_profile = user.userprofile
-            return Response({
-                'success': True,
-                'user': {
-                    'id': user.id,
-                    'username': user.username,
-                    'role': user_profile.role,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name
-                }
-            })
-        except UserProfile.DoesNotExist:
-            # 如果用户没有 UserProfile，创建一个默认的
-            user_profile = UserProfile.objects.create(user=user, role='viewer')
-            return Response({
-                'success': True,
-                'user': {
-                    'id': user.id,
-                    'username': user.username,
-                    'role': user_profile.role,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name
-                }
-            })
-    else:
-        # 检查用户是否存在
-        try:
-            user_exists = User.objects.filter(username=username).exists()
-            if user_exists:
-                return Response({
-                    'success': False,
-                    'error': 'Invalid password. Please check your password.'
-                }, status=400)
-            else:
-                return Response({
-                    'success': False,
-                    'error': 'Username does not exist. Please check your username.'
-                }, status=400)
-        except Exception:
-            # 如果检查用户存在性时出错，返回通用错误
-            return Response({
-                'success': False,
-                'error': 'Invalid username or password.'
-            }, status=400)
-
-@api_view(['POST'])
-def user_logout(request):
-    logout(request)
-    return Response({'success': True})
-
-@api_view(['GET'])
-def get_current_user(request):
-    if request.user.is_authenticated:
-        user_profile = request.user.userprofile
-        return Response({
-            'id': request.user.id,
-            'username': request.user.username,
-            'role': user_profile.role,
-            'first_name': request.user.first_name,
-            'last_name': request.user.last_name
-        })
-    return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
-
-# 在 myassets/views.py 中添加调试端点
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])
-def debug_routes(request):
-    """调试端点，显示所有可用的API路由"""
-    from django.urls import get_resolver
-    from collections import OrderedDict
-    
-    resolver = get_resolver()
-    patterns = resolver.url_patterns
-    
-    routes = OrderedDict()
-    
-    for pattern in patterns:
-        if hasattr(pattern, 'url_patterns'):
-            # 这是include的路由
-            for p in pattern.url_patterns:
-                if hasattr(p, 'name') and p.name:
-                    routes[p.name] = str(pattern.pattern) + str(p.pattern)
-        else:
-            # 直接路由
-            if hasattr(pattern, 'name') and pattern.name:
-                routes[pattern.name] = str(pattern.pattern)
-    
-    return Response({
-        'available_routes': routes,
-        'assets_endpoints': [
-            '/api/assets/',
-            '/api/assets/{id}/',
-            '/api/assets/{id}/download/',
-            '/api/assets/{id}/increment-view/'
-        ]
-    })
-
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])
-def test_assets_basic(request):
-    """最基本的资产测试端点"""
-    assets = Asset.objects.all()
-    
-    # 直接构建响应数据，避免序列化器问题
-    data = {
-        'total_assets': assets.count(),
-        'assets': []
-    }
-    
-    for asset in assets:
-        data['assets'].append({
-            'id': asset.id,
-            'name': asset.name,
-            'asset_no': asset.asset_no,
-            'type': asset.asset_type,
-            'has_file': bool(asset.file),
-            'file_path': str(asset.file) if asset.file else None,
-        })
-    
-    return Response(data)
+    permission_classes = [IsAuthenticated]

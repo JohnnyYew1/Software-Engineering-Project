@@ -19,11 +19,10 @@ export default function DashboardLayout({
   const router = useRouter()
   const pathname = usePathname()
 
+  // 首次挂载：读取用户；未登录跳 /login
   useEffect(() => {
     const user = authService.getCurrentUser()
     setCurrentUser(user)
-    
-    // 如果未登录，重定向到登录页
     if (!user) {
       router.push('/login')
     }
@@ -31,6 +30,8 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await authService.logout()
+    setCurrentUser(null)
+    router.push('/login')
   }
 
   // 根据用户角色生成菜单项
@@ -41,12 +42,12 @@ export default function DashboardLayout({
       { name: 'My Profile', path: '/dashboard/profile', roles: ['admin', 'editor', 'viewer'] },
     ]
 
-    // 只有 Editor 角色可以看到 Upload
+    // Editor 才能看到 Upload
     if (currentUser?.role === 'editor') {
       baseItems.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] })
     }
 
-    // 只有 Admin 角色可以看到 User Management
+    // Admin 才能看到 User Management
     if (currentUser?.role === 'admin') {
       baseItems.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] })
     }
@@ -54,7 +55,6 @@ export default function DashboardLayout({
     return baseItems.filter(item => item.roles.includes(currentUser?.role))
   }
 
-  // 获取角色描述
   const getRoleDescription = () => {
     switch (currentUser?.role) {
       case 'admin':

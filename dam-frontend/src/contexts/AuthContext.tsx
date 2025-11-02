@@ -1,90 +1,70 @@
 'use client';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { authService } from '@/services/auth';
+import type { CurrentUser, LoginMode } from '@/services/auth';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { authService, User } from '@/services/auth';
-
-interface AuthContextType {
-  user: User | null;
-  login: (username: string, password: string) => Promise<boolean>;
-  logout: () => void;
+interface AuthContextValue {
+  user: CurrentUser | null;
   loading: boolean;
-  error: string | null;
+  login: (username: string, password: string, mode?: LoginMode) => Promise<{ ok: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-// 确保使用 export 关键字
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    initializeAuth();
+    let mounted = true;
+    (async () => {
+      try {
+        const u = await authService.fetchCurrentUser();
+        if (mounted) setUser(u || null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
   }, []);
 
-  const initializeAuth = async () => {
-    try {
-      // 使用 authService 中实际存在的方法
-      const currentUser = authService.getCurrentUser();
-      if (currentUser) {
-        setUser(currentUser);
-      } else {
-        // 清除认证数据的替代方法
-        localStorage.removeItem('currentUser');
-        setUser(null);
-      }
-    } catch (error) {
-      console.error('Auth initialization failed:', error);
-      // 清除认证数据的替代方法
-      localStorage.removeItem('currentUser');
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (username: string, password: string, mode: LoginMode = 'session') => {
     setLoading(true);
-    setError(null);
-
     try {
-      const result = await authService.login({ username, password });
-      
-      if (result.success && result.user) {
-        setUser(result.user);
-        return true;
-      } else {
-        setError(result.error || '登录失败');
-        return false;
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      setError('登录过程中发生错误');
-      return false;
-    } finally {
+      const res = await authService.login({ username, password }, mode);
+      if (!res.success) return { ok: false, error: res.error || 'Login failed' };
+      const u = await authService.fetchCurrentUser();
+      setUser(u || null);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Login failed' };
+    } finally { setLoading(false); }
+  };
+
+  const logout = async () => {
+    setLoading(true);
+    try { await authService.logout(); } finally {
+      setUser(null);
       setLoading(false);
     }
   };
 
-  const logout = () => {
-    authService.logout();
-    setUser(null);
-    setError(null);
+  const refreshUser = async () => {
+    setLoading(true);
+    try {
+      const u = await authService.fetchCurrentUser();
+      setUser(u || null);
+    } finally { setLoading(false); }
   };
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loading, error }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ user, loading, login, logout, refreshUser }), [user, loading]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// 确保使用 export 关键字
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
 }

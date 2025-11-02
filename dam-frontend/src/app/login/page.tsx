@@ -1,5 +1,6 @@
-'use client'
-import { useState, useEffect } from 'react'
+'use client';
+
+import { useState, useEffect } from 'react';
 import { 
   Box, 
   Button, 
@@ -7,73 +8,63 @@ import {
   VStack, 
   Heading, 
   Text
-} from '@chakra-ui/react'
-import { useRouter } from 'next/navigation'
-import { authService, LoginCredentials } from '@/services/auth'
+} from '@chakra-ui/react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { permissions } from '@/utils/permissions';
 
 export default function LoginPage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [formData, setFormData] = useState<LoginCredentials>({
+  const router = useRouter();
+  const { user, loading, login } = useAuth(); // ✅ 使用上下文
+  const [isLoading, setIsLoading] = useState(false); // 保留你的命名
+  const [formData, setFormData] = useState<{username: string; password: string}>({
     username: '',
-    password: ''
-  })
-  const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null)
-  const router = useRouter()
+    password: '',
+  });
+  const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
+  // 已登录就跳转
   useEffect(() => {
-    // 如果已经登录，重定向到仪表板
-    if (authService.isAuthenticated()) {
-      router.push('/dashboard')
+    if (permissions.isAuthenticated(user)) {
+      router.push('/dashboard');
     }
-  }, [router])
+  }, [user, router]);
 
   useEffect(() => {
     if (message) {
-      const timer = setTimeout(() => setMessage(null), 5000)
-      return () => clearTimeout(timer)
+      const timer = setTimeout(() => setMessage(null), 5000);
+      return () => clearTimeout(timer);
     }
-  }, [message])
+  }, [message]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
-  }
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setMessage(null)
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage(null);
 
-    // 客户端验证
     if (!formData.username.trim() || !formData.password.trim()) {
-      setMessage({ 
-        type: 'error', 
-        text: 'Please enter both username and password.' 
-      })
-      setIsLoading(false)
-      return
+      setMessage({ type: 'error', text: 'Please enter both username and password.' });
+      setIsLoading(false);
+      return;
     }
 
-    const result = await authService.login(formData)
-    
-    if (result.success) {
-      setMessage({ 
-        type: 'success', 
-        text: 'Login successful! Redirecting to dashboard...' 
-      })
-      setTimeout(() => router.push('/dashboard'), 1000)
+    // 使用 JWT 登录；如果你是 session，则把 'jwt' 改成 'session'
+    const res = await login(formData.username, formData.password, 'jwt');
+
+    if (res.ok) {
+      setMessage({ type: 'success', text: 'Login successful! Redirecting to dashboard...' });
+      setTimeout(() => router.push('/dashboard'), 800);
     } else {
-      setMessage({ 
-        type: 'error', 
-        text: result.error || 'Login failed. Please try again.' 
-      })
+      setMessage({ type: 'error', text: res.error || 'Login failed. Please try again.' });
     }
-    
-    setIsLoading(false)
-  }
+
+    setIsLoading(false);
+  };
 
   return (
     <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
@@ -138,7 +129,7 @@ export default function LoginPage() {
                 type="submit"
                 colorScheme="blue"
                 width="100%"
-                loading={isLoading}
+                loading={isLoading || loading}   // ✅ 保持 loading 命名
                 loadingText="Logging in..."
               >
                 Log In
@@ -152,5 +143,5 @@ export default function LoginPage() {
         </VStack>
       </Box>
     </Box>
-  )
+  );
 }

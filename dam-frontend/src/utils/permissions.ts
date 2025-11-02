@@ -1,59 +1,68 @@
-import { authService } from '@/services/auth'
+// src/utils/permissions.ts
+export type Role = "admin" | "editor" | "viewer" | string;
 
-// 权限检查工具
-export const hasPermission = (requiredRole: string | string[]): boolean => {
-  const currentUser = authService.getCurrentUser()
-  if (!currentUser) return false
-  
-  if (Array.isArray(requiredRole)) {
-    return requiredRole.includes(currentUser.role)
-  }
-  
-  return currentUser.role === requiredRole
+export interface CurrentUser {
+  id: number | string;
+  username?: string;
+  role?: Role;
+  is_active?: boolean;
 }
 
-// 具体权限检查
+export interface UploadedBy {
+  id?: number | string;
+  username?: string;
+}
+
+export interface AssetLike {
+  id?: number | string;
+  uploaded_by?: UploadedBy | null;
+}
+
+export function isAuthenticated(user?: CurrentUser | null): boolean {
+  return !!(user && user.id);
+}
+export function canUpload(user?: CurrentUser | null): boolean {
+  const role = user?.role?.toLowerCase();
+  return role === "editor"; // Admin 禁止上传
+}
+export function canManageUsers(user?: CurrentUser | null): boolean {
+  const role = user?.role?.toLowerCase();
+  return role === "admin";
+}
+export function canViewAssets(user?: CurrentUser | null): boolean {
+  return isAuthenticated(user);
+}
+export function canEditAsset(
+  user: CurrentUser | null | undefined,
+  asset: AssetLike | null | undefined
+): boolean {
+  const role = user?.role?.toLowerCase();
+  if (role === "admin") return true;
+  if (role === "editor") {
+    const ownerId = asset?.uploaded_by?.id;
+    return ownerId != null && String(ownerId) === String(user?.id ?? "");
+  }
+  return false;
+}
+export function canDeleteAsset(
+  user: CurrentUser | null | undefined,
+  asset: AssetLike | null | undefined
+): boolean {
+  return canEditAsset(user, asset);
+}
+export function canDownloadAsset(user?: CurrentUser | null): boolean {
+  return isAuthenticated(user);
+}
+
+// 兼容历史：默认导出对象 permissions
 export const permissions = {
-  // 用户管理权限：只有 admin 可以管理用户
-  canManageUsers: (): boolean => hasPermission('admin'),
-  
-  // 上传权限：只有 editor 可以上传
-  canUpload: (): boolean => hasPermission('editor'),
-  
-  // 编辑权限：admin 可以编辑所有，editor 只能编辑自己的
-  canEditAsset: (assetOwnerId?: number): boolean => {
-    const currentUser = authService.getCurrentUser()
-    if (!currentUser) return false
-    
-    if (currentUser.role === 'admin') return true
-    if (currentUser.role === 'editor' && assetOwnerId === currentUser.id) return true
-    
-    return false
-  },
-  
-  // 删除权限：admin 可以删除所有，editor 只能删除自己的
-  canDeleteAsset: (assetOwnerId?: number): boolean => {
-    const currentUser = authService.getCurrentUser()
-    if (!currentUser) return false
-    
-    if (currentUser.role === 'admin') return true
-    if (currentUser.role === 'editor' && assetOwnerId === currentUser.id) return true
-    
-    return false
-  },
-  
-  // 下载权限：所有角色都可以下载
-  canDownload: (): boolean => hasPermission(['admin', 'editor', 'viewer']),
-  
-  // 查看权限：所有角色都可以查看
-  canView: (): boolean => hasPermission(['admin', 'editor', 'viewer']),
-  
-  // 获取当前用户
-  getCurrentUser: () => authService.getCurrentUser(),
-  
-  // 获取当前用户角色
-  getCurrentUserRole: (): string | null => {
-    const user = authService.getCurrentUser()
-    return user ? user.role : null
-  }
-}
+  isAuthenticated,
+  canUpload,
+  canManageUsers,
+  canViewAssets,
+  canEditAsset,
+  canDeleteAsset,
+  canDownloadAsset,
+};
+
+export default permissions;

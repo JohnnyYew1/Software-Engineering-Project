@@ -1,169 +1,104 @@
-import { apiRequest } from '@/lib/api';
+import { apiRequest, setAccessToken, setRefreshToken, getAccessToken } from '@/lib/api';
 
-export interface User {
-  id: number;
-  username: string;
-  role: 'admin' | 'editor' | 'viewer';
-  first_name: string;
-  last_name: string;
+export type LoginMode = 'jwt' | 'session';
+export type Role = 'admin' | 'editor' | 'viewer';
+export type LoginCredentials = { username: string; password: string; };
+
+export type CurrentUser = {
+  id: string | number;
+  username?: string;
+  first_name?: string;
+  role?: Role;
+  is_active?: boolean;
+};
+
+export type LoginResult = { success: boolean; error?: string; user?: CurrentUser };
+
+const STORAGE_USER = 'currentUser';
+const STORAGE_TOKENS = 'authTokens'; // 可选：保存 {access, refresh}
+
+function readUser(): CurrentUser | null {
+  if (typeof window === 'undefined') return null;
+  try { return JSON.parse(localStorage.getItem(STORAGE_USER) || 'null'); } catch { return null; }
+}
+function writeUser(u: CurrentUser | null) {
+  if (typeof window === 'undefined') return;
+  if (!u) localStorage.removeItem(STORAGE_USER);
+  else localStorage.setItem(STORAGE_USER, JSON.stringify(u));
 }
 
-export interface LoginCredentials {
-  username: string;
-  password: string;
+async function ensureCsrf() {
+  try { await apiRequest('/api/csrf/', { auth: 'session' }); } catch {}
 }
 
 export const authService = {
-  async login(credentials: LoginCredentials): Promise<{ success: boolean; user?: User; error?: string }> {
+  getCurrentUser(): CurrentUser | null {
+    return readUser();
+  },
+
+  async fetchCurrentUser(use: 'auto' | 'jwt' | 'session' = 'auto'): Promise<CurrentUser | null> {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/login/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(credentials),
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        // 根据 HTTP 状态码提供更具体的错误信息
-        if (response.status === 400) {
-          return { 
-            success: false, 
-            error: 'Invalid username or password. Please check your credentials.' 
-          };
-        } else if (response.status === 500) {
-          return { 
-            success: false, 
-            error: 'Server error. Please try again later.' 
-          };
-        } else {
-          return { 
-            success: false, 
-            error: `Connection error (${response.status}). Please check your network.` 
-          };
-        }
-      }
-
-      const data = await response.json();
-      
-      if (data.success) {
-        // 保存用户信息到 localStorage
-        localStorage.setItem('currentUser', JSON.stringify(data.user));
-        return { success: true, user: data.user };
-      } else {
-        return { 
-          success: false, 
-          error: data.error || 'Login failed. Please try again.' 
-        };
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      return { 
-        success: false, 
-        error: 'Cannot connect to the server. Please make sure the backend is running.' 
-      };
+      const me = await apiRequest('/api/me/', { auth: use as any });
+      writeUser(me || null);
+      return me || null;
+    } catch {
+      writeUser(null);
+      return null;
     }
   },
 
-  // 登出
+  async login(cred: LoginCredentials, mode: LoginMode = 'session'): Promise<LoginResult> {
+    try {
+      if (mode === 'session') {
+        // —— Session 登录 —— //
+        await ensureCsrf();
+        await apiRequest('/api/login/', {
+          method: 'POST',
+          body: cred,
+          auth: 'session',
+        });
+        const me = await this.fetchCurrentUser('session');
+        return { success: true, user: me || undefined };
+      } else {
+        // —— JWT 登录（SimpleJWT） —— //
+        // 1) 获取 token
+        const tokens = await apiRequest<{ access: string; refresh: string }>(
+          '/api/token/',
+          { method: 'POST', body: cred, auth: 'jwt' } // jwt 这里不需要 CSRF
+        );
+        setAccessToken(tokens.access);
+        setRefreshToken(tokens.refresh);
+        // 可选：保存整个 tokens
+        try { localStorage.setItem(STORAGE_TOKENS, JSON.stringify(tokens)); } catch {}
+
+        // 2) 用 Authorization: Bearer 访问当前用户
+        const me = await this.fetchCurrentUser('jwt');
+        return { success: true, user: me || undefined };
+      }
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Login failed' };
+    }
+  },
+
   async logout(): Promise<void> {
     try {
-      // 调用后端注销API
-      await fetch('http://127.0.0.1:8000/api/logout/', {
-        method: 'POST',
-        credentials: 'include',
-      });
-    } catch (error) {
-      console.error('Logout API call failed:', error);
+      // 对于 Session：通知后端注销
+      await ensureCsrf();
+      try { await apiRequest('/api/logout/', { method: 'POST', auth: 'session' }); } catch {}
     } finally {
-      // 无论如何都要清除前端状态
-      localStorage.removeItem('currentUser');
-      // 强制刷新页面以确保所有状态被清除
-      window.location.href = '/login';
+      // 清理本地
+      writeUser(null);
+      setAccessToken(null);
+      setRefreshToken(null);
+      try { localStorage.removeItem(STORAGE_TOKENS); } catch {}
     }
   },
-
-  // 获取当前用户
-  getCurrentUser(): User | null {
-    if (typeof window === 'undefined') return null;
-    
-    const userStr = localStorage.getItem('currentUser');
-    if (userStr) {
-      return JSON.parse(userStr);
-    }
-    return null;
-  },
-
-  // 检查是否已认证
-  isAuthenticated(): boolean {
-    return this.getCurrentUser() !== null;
-  },
-
-  // 获取当前用户角色
-  getCurrentUserRole(): string | null {
-    const user = this.getCurrentUser();
-    return user ? user.role : null;
-  },
-
-  // 测试连接（调试用）
-  async testConnection(): Promise<{ success: boolean; error?: string }> {
-    try {
-      // 简单的连接测试
-      const response = await fetch('http://127.0.0.1:8000/api/', {
-        method: 'GET',
-        credentials: 'include',
-      });
-      
-      if (response.ok) {
-        return { success: true };
-      } else {
-        return { 
-          success: false, 
-          error: `Backend responded with status: ${response.status}` 
-        };
-      }
-    } catch (error) {
-      console.error('Connection test failed:', error);
-      return { 
-        success: false, 
-        error: `Cannot connect to backend: ${error instanceof Error ? error.message : 'Unknown error'}` 
-      };
-    }
-  },
-
-  // 测试认证端点（调试用）
-  async testAuthEndpoint(): Promise<{ success: boolean; error?: string }> {
-    try {
-      const response = await fetch('http://127.0.0.1:8000/api/login/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: 'test',
-          password: 'test'
-        }),
-        credentials: 'include',
-      });
-
-      // 即使登录失败，只要端点响应就说明认证端点可用
-      if (response.status === 400 || response.status === 401) {
-        return { success: true }; // 端点存在，只是认证失败
-      } else if (response.ok) {
-        return { success: true };
-      } else {
-        return { 
-          success: false, 
-          error: `Auth endpoint responded with status: ${response.status}` 
-        };
-      }
-    } catch (error) {
-      console.error('Auth endpoint test failed:', error);
-      return { 
-        success: false, 
-        error: `Cannot connect to auth endpoint: ${error instanceof Error ? error.message : 'Unknown error'}` 
-      };
-    }
-  }
 };
+
+// 兼容旧命名
+export const getCurrentUser = () => authService.getCurrentUser();
+export const loginJWT = (username: string, password: string) =>
+  authService.login({ username, password }, 'jwt');
+export const loginSession = (username: string, password: string) =>
+  authService.login({ username, password }, 'session');
+export const logout = () => authService.logout();
