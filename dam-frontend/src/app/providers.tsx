@@ -1,13 +1,16 @@
 'use client';
 
-import * as React from 'react';
+import { ReactNode } from 'react';
+// ✅ Chakra v3：用 value={defaultSystem}，不要再用 theme / extendTheme / ColorModeScript
 import { ChakraProvider, defaultSystem } from '@chakra-ui/react';
-import { AuthProvider } from '@/contexts/AuthContext'; // ✅ 用命名导入，而不是默认导入
+import { AuthProvider } from '@/contexts/AuthContext';
 
-export default function Providers({ children }: { children: React.ReactNode }) {
+export default function Providers({ children }: { children: ReactNode }) {
   return (
     <ChakraProvider value={defaultSystem}>
-      <AuthProvider>{children}</AuthProvider>
+      <AuthProvider>
+        {children}
+      </AuthProvider>
     </ChakraProvider>
   );
 }
