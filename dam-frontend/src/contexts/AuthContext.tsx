@@ -1,7 +1,8 @@
-'use client';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { authService } from '@/services/auth';
-import type { CurrentUser, LoginMode } from '@/services/auth';
+// src/contexts/AuthContext.tsx
+"use client";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { authService } from "@/services/auth";
+import type { CurrentUser, LoginMode } from "@/services/auth";
 
 interface AuthContextValue {
   user: CurrentUser | null;
@@ -21,7 +22,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
     (async () => {
       try {
-        const u = await authService.fetchCurrentUser();
+        const u = authService.getCurrentUser();
         if (mounted) setUser(u || null);
       } finally {
         if (mounted) setLoading(false);
@@ -30,22 +31,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { mounted = false; };
   }, []);
 
-  const login = async (username: string, password: string, mode: LoginMode = 'session') => {
-    setLoading(true);
+  // ✅ 不再支持 session；忽略第三参或仅允许 "jwt"
+  const login = async (username: string, password: string) => {
     try {
-      const res = await authService.login({ username, password }, mode);
-      if (!res.success) return { ok: false, error: res.error || 'Login failed' };
-      const u = await authService.fetchCurrentUser();
-      setUser(u || null);
+      setLoading(true);
+      const res = await authService.login({ username, password });
+      if (!res.success) return { ok: false, error: res.error || "Login failed" };
+      setUser(authService.getCurrentUser());
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, error: e?.message || 'Login failed' };
-    } finally { setLoading(false); }
+      return { ok: false, error: e?.message || "Login failed" };
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = async () => {
     setLoading(true);
-    try { await authService.logout(); } finally {
+    try {
+      await authService.logout();
+    } finally {
       setUser(null);
       setLoading(false);
     }
@@ -54,17 +59,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = async () => {
     setLoading(true);
     try {
-      const u = await authService.fetchCurrentUser();
+      const u = authService.getCurrentUser();
       setUser(u || null);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const value = useMemo(() => ({ user, loading, login, logout, refreshUser }), [user, loading]);
+  const value = useMemo<AuthContextValue>(
+    () => ({ user, loading, login, logout, refreshUser }),
+    [user, loading]
+  );
+
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

@@ -83,26 +83,15 @@ export default function AssetsPage() {
   };
 
   /**
-   * ✅ 方案1：隐藏 <a download> 方式触发下载（不会新开标签页，也不会 404）
-   * - downloadAsset(id) 必须返回真正的文件直链（例如 http://127.0.0.1:8000/media/xxx.png）
-   * - 不再使用 window.open(url, '_blank')
+   * ✅ 方案1（推荐）：services/assets.ts 里 downloadAsset(id) 已经用 blob 下载并触发保存
+   * 页面只需 await，不要再把它当作“返回直链字符串”的函数使用
    */
   const handleDownload = async (asset: AssetType) => {
     try {
       setDownloadingIds((prev) => [...prev, asset.id]);
-      // 拿到后端提供的最终文件直链
-      const fileUrl = await downloadAsset(asset.id);
-      if (!fileUrl) throw new Error('No downloadable url');
 
-      // 创建隐藏 <a> 并触发点击（不会打开新页面）
-      const a = document.createElement('a');
-      a.href = fileUrl;
-      // 可选：给默认文件名（如果后端响应头含 Content-Disposition，会以响应头为准）
-      a.download = asset.name || 'download';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // 这里不再接收返回值（downloadAsset 返回 void）
+      await downloadAsset(asset.id);
 
       showToast('Download Started', 'success', `${asset.name} is being downloaded`);
     } catch (err) {
@@ -342,7 +331,7 @@ export default function AssetsPage() {
                         colorScheme="green"
                         flex={1}
                         onClick={() => handleDownload(asset)}
-                        loading={downloadingIds.includes(asset.id)}
+                        loading={downloadingIds.includes(asset.id)}  // 保留你原本的 loading 写法
                       >
                         {downloadingIds.includes(asset.id) ? 'Downloading...' : 'Download'}
                       </Button>

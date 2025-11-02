@@ -113,12 +113,22 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
-CORS_ALLOW_CREDENTIALS = True  # ✅ 允许携带 Cookie
+# ---- CORS / CSRF（允许跨域携带 Cookie）----
+CORS_ALLOW_ALL_ORIGINS = False                  # ❌ 必须关掉这个，和 credentials 冲突
+CORS_ALLOWED_ORIGINS = [                        # ✅ 白名单写清楚前端来源
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+CORS_ALLOW_CREDENTIALS = True                   # ✅ 允许带 Cookie
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+#（可选，通常默认值就够）
+# SESSION_COOKIE_SAMESITE = "Lax"
+# SESSION_COOKIE_SECURE = False
 
 # 本地开发 Cookie 安全策略
 SESSION_COOKIE_SECURE = False
