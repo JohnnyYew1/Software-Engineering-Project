@@ -17,19 +17,34 @@ export type CurrentUser = {
 
 const STORAGE_USER = "currentUser";
 
+/** 小写归一化角色，防止后端返回大小写不同导致前端判断错 */
+function normalizeRole(raw: unknown): "admin" | "editor" | "viewer" | undefined {
+  const r = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return (["admin", "editor", "viewer"] as const).includes(r as any) ? (r as any) : undefined;
+}
+
 function readUser(): CurrentUser | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(STORAGE_USER);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CurrentUser;
+    // 读出来时也做一次归一化兜底
+    const fixed: CurrentUser = { ...parsed, role: normalizeRole(parsed?.role) };
+    return fixed;
   } catch {
     return null;
   }
 }
 function writeUser(u: CurrentUser | null) {
   if (typeof window === "undefined") return;
-  if (!u) localStorage.removeItem(STORAGE_USER);
-  else localStorage.setItem(STORAGE_USER, JSON.stringify(u));
+  if (!u) {
+    localStorage.removeItem(STORAGE_USER);
+  } else {
+    // 写入前再归一化一次
+    const fixed: CurrentUser = { ...u, role: normalizeRole(u.role) };
+    localStorage.setItem(STORAGE_USER, JSON.stringify(fixed));
+  }
 }
 
 export const authService = {
@@ -59,7 +74,12 @@ export const authService = {
       // 2) 读取当前用户
       const me = await apiRequest<CurrentUser>("/api/me/");
       // ✅ 修正“id 重复定义被覆盖”的 TS 警告：先展开，再兜底 id
-      const ensured: CurrentUser = { ...me, id: (me as any)?.id ?? "0" };
+      // ✅ 同时把 role 统一成小写再存
+      const ensured: CurrentUser = {
+        ...me,
+        id: (me as any)?.id ?? "0",
+        role: normalizeRole((me as any)?.role),
+      };
       writeUser(ensured);
 
       return { success: true, user: ensured };
