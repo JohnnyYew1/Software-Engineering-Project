@@ -3,8 +3,11 @@ import os
 from datetime import timedelta
 import mimetypes
 
+# ✅ 补充常见模型/文档类型
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
+mimetypes.add_type("application/pdf", ".pdf")  # <-- 新增，兜底 PDF
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-change-me")
@@ -23,11 +26,11 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_filters",
     # local
-    "myassets.apps.MyassetsConfig",  # ✅ 保留 app config
+    "myassets.apps.MyassetsConfig",
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",  # ✅ 放最前
+    "corsheaders.middleware.CorsMiddleware",  # 放最前
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -91,7 +94,6 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
-    # ✅ 同时保留 Session + JWT，顺序不重要
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -111,29 +113,20 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
-# CORS/CSRF（本地开发）
+# ---- CORS / CSRF（允许跨域携带 Cookie）----
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
-# ---- CORS / CSRF（允许跨域携带 Cookie）----
-CORS_ALLOW_ALL_ORIGINS = False                  # ❌ 必须关掉这个，和 credentials 冲突
-CORS_ALLOWED_ORIGINS = [                        # ✅ 白名单写清楚前端来源
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-CORS_ALLOW_CREDENTIALS = True                   # ✅ 允许带 Cookie
+CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
-#（可选，通常默认值就够）
-# SESSION_COOKIE_SAMESITE = "Lax"
-# SESSION_COOKIE_SECURE = False
-
-# 本地开发 Cookie 安全策略
+# 本地开发 Cookie 策略
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SAMESITE = "Lax"

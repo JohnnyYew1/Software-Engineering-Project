@@ -1,35 +1,32 @@
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Asset, Tag, AssetVersion, UserProfile
-
-User = get_user_model()
+from .models import Asset, Tag, UserProfile, AssetVersion
 
 
-# ---- 基础序列化 ----
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag
         fields = ["id", "name"]
 
 
-class UserMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ["id", "username"]
-
-
 class UserProfileSerializer(serializers.ModelSerializer):
-    user = UserMiniSerializer(read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
 
     class Meta:
         model = UserProfile
-        fields = ["id", "user", "role"]
+        fields = ["id", "username", "email", "role"]
 
 
-# ---- 版本历史 ----
-class AssetVersionListSerializer(serializers.ModelSerializer):
-    uploaded_by = UserMiniSerializer(read_only=True)
+class MiniUserSerializer(serializers.Serializer):
+    """精简用户信息（用于 uploaded_by 字段）"""
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class AssetVersionSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
+    uploaded_by = serializers.SerializerMethodField()
 
     class Meta:
         model = AssetVersion
@@ -38,41 +35,29 @@ class AssetVersionListSerializer(serializers.ModelSerializer):
             "version",
             "file",
             "file_url",
-            "uploaded_at",
+            "created_at",
             "uploaded_by",
             "note",
         ]
-        read_only_fields = fields
 
     def get_file_url(self, obj):
-        try:
-            if obj.file and hasattr(obj.file, "url"):
-                return obj.file.url
-        except Exception:
-            pass
+        request = self.context.get("request")
+        if obj.file and hasattr(obj.file, "url"):
+            url = obj.file.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
-
-class AssetVersionCreateSerializer(serializers.ModelSerializer):
-    """POST /assets/{id}/versions/ 用：只需文件与可选备注"""
-    class Meta:
-        model = AssetVersion
-        fields = ["file", "note"]
-
-    def validate_file(self, f):
-        if not f:
-            raise serializers.ValidationError("文件不能为空")
-        return f
+    def get_uploaded_by(self, obj):
+        u = getattr(obj, "uploaded_by", None)
+        if not u:
+            return None
+        return {"id": u.id, "username": u.username}
 
 
-# ---- 资产 ----
 class AssetSerializer(serializers.ModelSerializer):
     tags = TagSerializer(many=True, read_only=True)
-    tag_ids = serializers.PrimaryKeyRelatedField(
-        many=True, queryset=Tag.objects.all(), write_only=True, required=False, source="tags"
-    )
+    uploaded_by = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
-    uploaded_by = UserMiniSerializer(read_only=True)
 
     class Meta:
         model = Asset
@@ -82,19 +67,10 @@ class AssetSerializer(serializers.ModelSerializer):
             "brand",
             "asset_no",
             "description",
-            "asset_type",      # 注意：你的模型字段是 asset_type
+            "asset_type",
             "file",
             "file_url",
             "tags",
-            "tag_ids",
-            "upload_date",     # 注意：你的模型字段是 upload_date
-            "download_count",
-            "view_count",
-            "uploaded_by",
-        ]
-        read_only_fields = [
-            "id",
-            "file_url",
             "upload_date",
             "download_count",
             "view_count",
@@ -102,25 +78,14 @@ class AssetSerializer(serializers.ModelSerializer):
         ]
 
     def get_file_url(self, obj):
-        try:
-            if obj.file and hasattr(obj.file, "url"):
-                return obj.file.url
-        except Exception:
-            pass
+        request = self.context.get("request")
+        if obj.file and hasattr(obj.file, "url"):
+            url = obj.file.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
-    def create(self, validated_data):
-        tags = validated_data.pop("tags", [])
-        asset = Asset.objects.create(**validated_data)
-        if tags:
-            asset.tags.set(tags)
-        return asset
-
-    def update(self, instance, validated_data):
-        tags = validated_data.pop("tags", None)
-        for k, v in validated_data.items():
-            setattr(instance, k, v)
-        instance.save()
-        if tags is not None:
-            instance.tags.set(tags)
-        return instance
+    def get_uploaded_by(self, obj):
+        u = getattr(obj, "uploaded_by", None)
+        if not u:
+            return None
+        return {"id": u.id, "username": u.username}

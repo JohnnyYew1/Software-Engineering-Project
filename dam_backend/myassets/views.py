@@ -1,9 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.http import JsonResponse, FileResponse
-from django.shortcuts import get_object_or_404
-from django.db.models import Max
-
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -12,17 +9,20 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
+from django.db.models import Max
+from django.db import transaction, IntegrityError, connection
+
 import mimetypes
 import os
 import urllib.parse
+import traceback
 
 from .models import Asset, Tag, UserProfile, AssetVersion
 from .serializers import (
     AssetSerializer,
     TagSerializer,
     UserProfileSerializer,
-    AssetVersionListSerializer,
-    AssetVersionCreateSerializer,
+    AssetVersionSerializer,
 )
 from .permissions import AssetPermission
 
@@ -71,18 +71,9 @@ def get_current_user(request):
     })
 
 
-# 小工具：获取用户角色（小写）
-def _get_role(user) -> str:
-    try:
-        r = user.userprofile.role
-    except Exception:
-        r = getattr(user, "role", "viewer")
-    return (r or "viewer").lower()
-
-
-# ---------------- 资源 ----------------
+# ---------------- Assets ----------------
 class AssetViewSet(viewsets.ModelViewSet):
-    queryset = Asset.objects.all().select_related("uploaded_by").prefetch_related("tags").order_by("-upload_date")
+    queryset = Asset.objects.all().select_related("uploaded_by").prefetch_related("tags")
     serializer_class = AssetSerializer
     permission_classes = [AssetPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -90,7 +81,7 @@ class AssetViewSet(viewsets.ModelViewSet):
     # 搜索字段
     search_fields = ["name", "description", "tags__name"]
 
-    # 这里保留对 tags（ID）的 exact/in 过滤
+    # 支持的过滤（保持你原本逻辑）
     filterset_fields = {
         "asset_type": ["exact"],
         "uploaded_by": ["exact"],
@@ -104,7 +95,11 @@ class AssetViewSet(viewsets.ModelViewSet):
         ctx["request"] = self.request
         return ctx
 
-    # 按标签“名称”过滤：tag_names=logo,product；支持 ?tags=1&tags=2；支持 date_from/date_to
+    # 角色判定（admin/editor 才能写）
+    def _role(self, user):
+        return getattr(getattr(user, "userprofile", None), "role", "viewer").lower()
+
+    # tag 名称过滤 + 多 tag id 过滤 + 日期范围（保留你原逻辑）
     def get_queryset(self):
         qs = super().get_queryset()
         q = self.request.query_params
@@ -118,7 +113,7 @@ class AssetViewSet(viewsets.ModelViewSet):
         if date_to:
             qs = qs.filter(upload_date__date__lte=date_to)
 
-        # ✅ Tag ID 多选（OR 逻辑）支持 ?tags=1&tags=2
+        # 支持 ?tags=1&tags=2
         tag_ids = q.getlist("tags")
         if tag_ids:
             try:
@@ -126,9 +121,8 @@ class AssetViewSet(viewsets.ModelViewSet):
                 if ids:
                     qs = qs.filter(tags__id__in=ids).distinct()
             except ValueError:
-                pass  # 忽略非法值，避免 400
+                pass
 
-        # ✅ 按名称过滤：tag_names=logo,product
         if tag_names_csv:
             names = [t.strip() for t in tag_names_csv.split(",") if t.strip()]
             if names:
@@ -139,7 +133,6 @@ class AssetViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
 
-    # -------- 预览 / 下载（保持你的原逻辑） --------
     @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated])
     def preview(self, request, pk=None):
         asset = self.get_object()
@@ -160,102 +153,169 @@ class AssetViewSet(viewsets.ModelViewSet):
         if not asset.file:
             return Response({"detail": "No file"}, status=404)
 
+        # 推断下载文件名
         base_name = (asset.name or os.path.basename(asset.file.name)).strip()
         root, ext = os.path.splitext(base_name)
         if not ext:
             _, real_ext = os.path.splitext(asset.file.name)
-            base_name = root + real_ext
+            base_name = (root or os.path.splitext(os.path.basename(asset.file.name))[0]) + (real_ext or "")
 
         mime, _ = mimetypes.guess_type(asset.file.name)
         mime = mime or "application/octet-stream"
 
+        # 计数
         asset.download_count = (asset.download_count or 0) + 1
         asset.save(update_fields=["download_count"])
 
-        resp = FileResponse(asset.file.open("rb"), as_attachment=True, filename=base_name)
+        # 返回文件（暴露必要响应头，前端可读取文件名/长度）
+        fh = asset.file.open("rb")
+        resp = FileResponse(fh, as_attachment=True, filename=base_name)
         resp["Content-Type"] = mime
+        resp["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Length"
         quoted = urllib.parse.quote(base_name)
         resp["Content-Disposition"] = f"attachment; filename*=UTF-8''{quoted}"
+        try:
+            size = getattr(asset.file, "size", None)
+            if size is None and hasattr(asset.file, "path"):
+                size = os.path.getsize(asset.file.path)
+            if size is not None:
+                resp["Content-Length"] = str(size)
+        except Exception:
+            pass
         return resp
 
-    # -------- 版本历史（新增，最小侵入） --------
+    # ----------------- 版本历史：合并 GET 列表 & POST 上传 -----------------
     @action(detail=True, methods=["get", "post"], permission_classes=[IsAuthenticated], url_path="versions")
     def versions(self, request, pk=None):
-        """
-        GET  /assets/{id}/versions/     -> 列出版本（按 version desc）
-        POST /assets/{id}/versions/     -> 上传新版本（Admin/Editor）
-        """
         asset = self.get_object()
 
+        # GET：列表（最新在最上）
         if request.method.lower() == "get":
-            qs = AssetVersion.objects.filter(asset=asset).order_by("-version", "-uploaded_at")
-            data = AssetVersionListSerializer(qs, many=True).data
-            return Response(data)
+            qs = asset.versions.select_related("uploaded_by").all().order_by("-version", "-created_at")
+            ser = AssetVersionSerializer(qs, many=True, context={"request": request})
+            return Response(ser.data)
 
-        # POST: 仅 admin/editor 允许
-        role = _get_role(request.user)
-        if role not in ("admin", "editor"):
-            return Response({"detail": "权限不足，仅 Admin/Editor 可上传新版本。"}, status=status.HTTP_403_FORBIDDEN)
+        # POST：上传新版本（key='file'，可选 'note'）
+        if self._role(request.user) not in ("admin", "editor"):
+            return Response({"detail": "Permission denied."}, status=403)
 
-        ser = AssetVersionCreateSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-
-        maxv = AssetVersion.objects.filter(asset=asset).aggregate(m=Max("version")).get("m") or 0
-        next_version = maxv + 1
-
-        version = AssetVersion.objects.create(
-            asset=asset,
-            version=next_version,
-            file=ser.validated_data["file"],
-            uploaded_by=request.user,
-            note=ser.validated_data.get("note", ""),
+        uploaded_file = (
+            request.FILES.get("file")
+            or request.FILES.get("version_file")
+            or request.FILES.get("upload")
+            or request.FILES.get("asset")
+            or (next(iter(request.FILES.values())) if request.FILES else None)
         )
+        note = request.data.get("note") or request.data.get("version_note") or ""
 
-        # 将主 Asset 的 file 指向最新版本，便于前端继续用当前文件预览
-        asset.file = version.file
-        asset.save(update_fields=["file"])
+        if not uploaded_file:
+            return Response({
+                "detail": "No file in multipart form-data.",
+                "hint": "Use FormData and append with key 'file'.",
+                "received_keys": list(request.FILES.keys()),
+            }, status=400)
 
-        return Response(AssetVersionListSerializer(version).data, status=status.HTTP_201_CREATED)
+        try:
+            with transaction.atomic():
+                last = asset.versions.aggregate(mx=Max("version")).get("mx") or 0
+                new_ver = int(last) + 1
+                try:
+                    v = AssetVersion.objects.create(
+                        asset=asset,
+                        version=new_ver,
+                        file=uploaded_file,
+                        uploaded_by=request.user,
+                        note=note.strip() or None,
+                    )
+                except Exception as inner:
+                    # 兼容数据库曾缺少 note 列的场景
+                    msg = str(inner).lower()
+                    if "column \"note\"" in msg or "column 'note'" in msg or "note does not exist" in msg:
+                        relpath = getattr(uploaded_file, "name", str(uploaded_file))
+                        with connection.cursor() as cur:
+                            cur.execute(
+                                """
+                                INSERT INTO myassets_assetversion
+                                    (asset_id, version, file, uploaded_by_id, created_at)
+                                VALUES (%s, %s, %s, %s, NOW())
+                                RETURNING id
+                                """,
+                                [asset.id, new_ver, relpath, getattr(request.user, "id", None)],
+                            )
+                            new_id = cur.fetchone()[0]
+                        v = AssetVersion.objects.get(pk=new_id)
+                    else:
+                        raise
 
+                # 同步把 Asset 当前文件指向最新版本
+                asset.file = v.file
+                asset.save(update_fields=["file"])
+
+        except IntegrityError:
+            return Response({"detail": "Version conflict. Please retry."}, status=409)
+        except Exception as e:
+            traceback.print_exc()
+            return Response({"detail": f"Upload failed: {str(e)}"}, status=400)
+
+        ser = AssetVersionSerializer(v, context={"request": request})
+        return Response(ser.data, status=201)
+
+    # 最新版本
     @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated], url_path="versions/latest")
     def latest_version(self, request, pk=None):
-        """
-        GET /assets/{id}/versions/latest -> 返回最新版本
-        """
         asset = self.get_object()
-        latest = AssetVersion.objects.filter(asset=asset).order_by("-version", "-uploaded_at").first()
-        if not latest:
-            return Response({"detail": "暂无版本历史。"}, status=status.HTTP_404_NOT_FOUND)
-        return Response(AssetVersionListSerializer(latest).data)
+        ver = asset.versions.select_related("uploaded_by").order_by("-version", "-created_at").first()
+        if not ver:
+            return Response({"detail": "No versions"}, status=404)
+        ser = AssetVersionSerializer(ver, context={"request": request})
+        return Response(ser.data)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated], url_path=r"versions/(?P<ver>\d+)/restore")
-    def restore_version(self, request, pk=None, ver=None):
-        """
-        POST /assets/{id}/versions/{ver}/restore
-        回滚到指定版本；并记录为一个新的“头部版本”（便于审计与前端统一）。
-        """
+    # 回滚：/api/assets/:id/versions/<ver>/restore/
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated],
+        url_path=r"versions/(?P<ver>\d+)/restore"
+    )
+    def restore_version_nested(self, request, pk=None, ver=None):
+        if self._role(request.user) not in ("admin", "editor"):
+            return Response({"detail": "Permission denied."}, status=403)
+
         asset = self.get_object()
-        role = _get_role(request.user)
-        if role not in ("admin", "editor"):
-            return Response({"detail": "权限不足，仅 Admin/Editor 可回滚版本。"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            ver_num = int(ver)
+        except Exception:
+            return Response({"detail": "Invalid version"}, status=400)
 
-        target = get_object_or_404(AssetVersion, asset=asset, version=int(ver))
+        target = asset.versions.filter(version=ver_num).first()
+        if not target:
+            return Response({"detail": "Version not found"}, status=404)
 
-        # 主 Asset 指向该版本文件
-        asset.file = target.file
-        asset.save(update_fields=["file"])
+        with transaction.atomic():
+            last = asset.versions.aggregate(mx=Max("version")).get("mx") or 0
+            new_ver = int(last) + 1
+            new_v = AssetVersion.objects.create(
+                asset=asset,
+                version=new_ver,
+                file=target.file,
+                note=f"restore to v{ver_num}",
+                uploaded_by=request.user,
+            )
+            asset.file = new_v.file
+            asset.save(update_fields=["file"])
 
-        # 记录一次新的头部版本
-        maxv = AssetVersion.objects.filter(asset=asset).aggregate(m=Max("version")).get("m") or 0
-        new_head = AssetVersion.objects.create(
-            asset=asset,
-            version=maxv + 1,
-            file=target.file,
-            uploaded_by=request.user,
-            note=f"restore from v{target.version}",
-        )
+        ser = AssetVersionSerializer(new_v, context={"request": request})
+        return Response(ser.data, status=201)
 
-        return Response(AssetVersionListSerializer(new_head).data, status=status.HTTP_200_OK)
+    # 兼容旧回滚：/api/assets/:id/restore_version/?version=#
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated], url_path="restore_version")
+    def restore_version_query(self, request, pk=None):
+        if self._role(request.user) not in ("admin", "editor"):
+            return Response({"detail": "Permission denied."}, status=403)
+        ver = request.query_params.get("version")
+        if not ver:
+            return Response({"detail": "Missing version"}, status=400)
+        return self.restore_version_nested(request, pk, ver)
 
 
 class TagViewSet(viewsets.ModelViewSet):

@@ -4,7 +4,13 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { Asset as AssetType, Tag } from '@/services/assets';
-import { getAssets, downloadAsset, listTags } from '@/services/assets';
+import {
+  getAssets,
+  listTags,
+  // ✅ 新增两个工具：真正下载 + 保存
+  downloadAssetBlob,
+  saveBlob,
+} from '@/services/assets';
 import {
   Box,
   Container,
@@ -20,7 +26,6 @@ import {
   Center,
   Input
 } from '@chakra-ui/react';
-
 
 const ModelViewer: any = 'model-viewer';
 const ThreeObjMtlViewer = dynamic(() => import('@/components/ThreeObjMtlViewer'), { ssr: false });
@@ -49,6 +54,7 @@ const TYPE_OPTIONS = [
   { label: '3D Model', value: '3d_model' },
   { label: 'Image', value: 'image' },
   { label: 'Video', value: 'video' },
+  { label: 'PDF', value: 'pdf' }, // ✅ 新增
 ] as const;
 
 const ORDERING_OPTIONS = [
@@ -122,7 +128,19 @@ function AssetPreviewBox({
     );
   }
 
+  if (asset.asset_type === 'pdf') {
+    return (
+      <Center p={3}>
+        <VStack gap={1}>
+          <Text fontSize="lg" fontWeight="bold" color="red.600">PDF</Text>
+          <Text fontSize="xs" color="gray.600">Open in Preview</Text>
+        </VStack>
+      </Center>
+    );
+  }
+
   if (asset.asset_type === '3d_model') {
+    const fileUrl = toUrl((asset as any).file_url || asset.file);
     if (isObjOrMtl(fileUrl)) {
       return <ThreeObjMtlViewer srcUrl={fileUrl} />;
     }
@@ -323,7 +341,7 @@ export default function AssetsPage() {
     tag_ids: [],
   });
 
-  // 搜索与日期（尊重你之前需求：搜索输入不放“/tag”文案）
+  // 搜索与日期
   const [searchInput, setSearchInput] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -339,7 +357,7 @@ export default function AssetsPage() {
     fetchTags();
   }, []);
 
-  // 加载资产（注意：tags 传 “1,2,3” 保证 OR 且不出 400）
+  // 加载资产
   const loadAssets = async (_filters: Filters = filters) => {
     try {
       setLoading(true);
@@ -350,7 +368,7 @@ export default function AssetsPage() {
         ordering: _filters.ordering || undefined,
         date_from: _filters.date_from || undefined,
         date_to: _filters.date_to || undefined,
-        // 🔧 关键修复：把 number[] → '1,2,3'（后端更稳，不会 400）
+        // 把 number[] → '1,2,3'（后端更稳）
         tags: _filters.tag_ids && _filters.tag_ids.length
           ? _filters.tag_ids.join(',')
           : undefined,
@@ -374,14 +392,37 @@ export default function AssetsPage() {
     setImageErrors((prev) => new Set(prev).add(assetId));
   };
 
+  // ✅ 真正的下载逻辑（保存到本地）
   const handleDownload = async (asset: AssetType) => {
+    const fileUrl = toUrl((asset as any).file_url || asset.file);
     try {
       setDownloadingIds((prev) => [...prev, asset.id]);
-      await downloadAsset(asset.id);
-      showToast('Download Started', 'success', `${asset.name} is being downloaded`);
+
+      // 1) 优先通过后端下载 API 拿 blob + 真实文件名
+      const { blob, filename } = await downloadAssetBlob(asset.id);
+
+      // 2) 兜底文件名：资源名 / URL 文件名 / 扩展名
+      const fallbackBase =
+        (asset.name && asset.name.trim()) ||
+        (fileUrl && fileUrl.split('/').pop()) ||
+        'download';
+      const ext = getExt(fileUrl);
+      const finalName = filename || (ext ? `${fallbackBase}.${ext}` : fallbackBase);
+
+      // 3) 触发保存
+      saveBlob(blob, finalName);
+
+      showToast('Download Started', 'success', `${finalName}`);
     } catch (err) {
+      // 如果 API 下载失败，降级：直接新开标签请求文件 URL（让浏览器处理下载/预览）
       const message = err instanceof Error ? err.message : 'Download failed';
-      showToast('Download Failed', 'error', message);
+      console.warn('download via API failed, fallback to window.open:', message);
+      if (fileUrl) {
+        window.open(fileUrl, '_blank', 'noopener,noreferrer');
+        showToast('Download Started (fallback)', 'info', 'Opened in a new tab');
+      } else {
+        showToast('Download Failed', 'error', message);
+      }
     } finally {
       setDownloadingIds((prev) => prev.filter((id) => id !== asset.id));
     }
@@ -430,7 +471,7 @@ export default function AssetsPage() {
             </Button>
           </HStack>
 
-          {/* 控件区：四列在桌面呈现，移动端折行 */}
+          {/* 控件区 */}
           <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={4}>
             {/* Search */}
             <Box>
@@ -492,16 +533,16 @@ export default function AssetsPage() {
             </Box>
           </SimpleGrid>
 
-          {/* Tags 独占一行：下拉多选 + 选中摘要 + Done 自动应用 */}
+          {/* Tags */}
           <TagMultiDropdown
             all={allTags}
             selected={selectedTagIds}
             onChange={setSelectedTagIds}
-            onApply={applyAllFilters} // ✅ Done 即应用
+            onApply={applyAllFilters}
             buttonLabel="Tags"
           />
 
-          {/* 排序独立一行，贴近右侧 */}
+          {/* Ordering */}
           <HStack justify="flex-end">
             <Box minW="220px">
               <Text fontSize="sm" mb={1} color="gray.600">Ordering</Text>
@@ -624,6 +665,8 @@ export default function AssetsPage() {
                               ? 'blue'
                               : asset.asset_type === 'video'
                               ? 'red'
+                              : asset.asset_type === 'pdf'
+                              ? 'purple'
                               : 'green'
                           }
                         >
@@ -692,6 +735,7 @@ export default function AssetsPage() {
                         colorScheme="green"
                         flex={1}
                         onClick={() => handleDownload(asset)}
+                        // 按你的要求：不用 isLoading
                         loading={downloadingIds.includes(asset.id)}
                       >
                         {downloadingIds.includes(asset.id) ? 'Downloading...' : 'Download'}

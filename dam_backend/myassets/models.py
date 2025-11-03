@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 class UserProfile(models.Model):
     USER_ROLES = [
         ('admin', 'Admin'),
-        ('editor', 'Editor'), 
+        ('editor', 'Editor'),
         ('viewer', 'Viewer'),
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -24,10 +24,11 @@ class Tag(models.Model):
 class Asset(models.Model):
     ASSET_TYPES = [
         ('image', 'Image'),
-        ('3d_model', '3D Model'), 
         ('video', 'Video'),
+        ('pdf',   'PDF'),
+        ('3d_model', '3D Model'),
+        ('document', 'Document'),
     ]
-    
     name = models.CharField(max_length=200)
     asset_no = models.CharField(max_length=50, unique=True)
     brand = models.CharField(max_length=100, blank=True)
@@ -38,26 +39,30 @@ class Asset(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
     tags = models.ManyToManyField(Tag, blank=True)
     view_count = models.IntegerField(default=0)
-    download_count = models.IntegerField(default=0)  # 添加下载计数字段
+    download_count = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['-upload_date']
 
     def __str__(self):
         return f"{self.name} ({self.asset_type})"
 
-    class Meta:
-        verbose_name = "Asset"
-        verbose_name_plural = "Assets"
-        ordering = ['-upload_date']
 
+# 版本文件存储路径：assets/{asset_id}/v{version}/{filename}
+def version_upload_path(instance, filename):
+    return f"assets/{instance.asset_id}/v{instance.version}/{filename}"
 
 class AssetVersion(models.Model):
-    asset = models.ForeignKey('Asset', on_delete=models.CASCADE, related_name='versions')
-    file = models.FileField(upload_to='assets/versions/%Y/%m/%d/')
+    asset = models.ForeignKey(Asset, related_name='versions', on_delete=models.CASCADE)
     version = models.PositiveIntegerField(default=1)
-    created_at = models.DateTimeField(auto_now_add=True)
+    file = models.FileField(upload_to=version_upload_path)
+    note = models.CharField(max_length=255, blank=True, null=True)
     uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        unique_together = ("asset", "version")
         ordering = ['-version', '-created_at']
 
     def __str__(self):
-        return f"{self.asset.name} v{self.version}"
+        return f"{self.asset_id} v{self.version}"

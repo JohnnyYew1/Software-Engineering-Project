@@ -137,6 +137,7 @@ export default function UploadPage() {
       setAssetData((prev) => ({ ...prev, name: prev.name || fileNameWithoutExt }));
       setMessage(null);
     } else {
+      setSelectedFile(null);
       setMessage({
         type: 'error',
         text: 'Please upload supported file types: JPG, PNG (images), GLB (3D), MP4 (videos), or PDF (documents)',
@@ -367,16 +368,16 @@ export default function UploadPage() {
             <Box position="relative" ref={dropdownRef as any}>
               <Text fontWeight="medium" mb={2}>Tags</Text>
 
-            <Button
+              <Button
                 variant="outline"
                 onClick={openTagDropdown}
                 style={{ justifyContent: 'space-between', width: '100%' }}
               >
-              <HStack justify="space-between" width="100%">
-               <span
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title={selectedTagNames}
-               >
+                <HStack justify="space-between" width="100%">
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={selectedTagNames}
+                  >
                     {selectedTagNames}
                   </span>
                   <span style={{ fontSize: 12, lineHeight: 1 }}>▾</span>
@@ -459,12 +460,11 @@ export default function UploadPage() {
               <Button
                 colorScheme="blue"
                 onClick={handleUpload}
-                loading={uploading}
-                loadingText="Uploading..."
+                disabled={uploading}
               >
-                Upload Asset
+                {uploading ? 'Uploading…' : 'Upload Asset'}
               </Button>
-              <Button variant="outline" onClick={handleClear}>
+              <Button variant="outline" onClick={handleClear} disabled={uploading}>
                 Clear
               </Button>
             </HStack>

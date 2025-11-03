@@ -23,7 +23,7 @@ export type AssetItem = {
   description?: string;
 
   // 后端真实字段
-  asset_type?: "image" | "video" | "3d_model" | "document" | string;
+  asset_type?: "image" | "video" | "3d_model" | "pdf" | "document" | string;
 
   // 兼容旧页面字段
   type?: string;
@@ -56,11 +56,11 @@ export type AssetVersion = {
   version: number;
   file: string;
   file_url?: string;
-  uploaded_at: string;
+  created_at: string;
   uploaded_by?: MiniUser;
   note?: string;
-  // 旧页面用 created_at，这里保证始终有值（由 uploaded_at 映射）
-  created_at: string;
+  // 兼容旧页面：如果旧代码用 uploaded_at，这里额外提供（由 created_at 映射）
+  uploaded_at?: string;
 };
 
 export type GetAssetsParams = {
@@ -159,7 +159,10 @@ export async function createAsset(form: FormData): Promise<AssetItem> {
     headers: authHeaders(), // Content-Type 交给浏览器自动带 multipart 边界
     body: form,
   });
-  if (!res.ok) throw new Error(`Create failed (${res.status})`);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Create failed (${res.status}) ${txt}`);
+  }
   return (await res.json()) as AssetItem;
 }
 
@@ -174,7 +177,10 @@ export async function updateAsset(
     headers: isFD ? authHeaders() : authHeaders({ "Content-Type": "application/json" }),
     body: isFD ? (data as FormData) : JSON.stringify(data ?? {}),
   });
-  if (!res.ok) throw new Error(`Update failed (${res.status})`);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Update failed (${res.status}) ${txt}`);
+  }
   return (await res.json()) as AssetItem;
 }
 
@@ -184,7 +190,10 @@ export async function deleteAsset(id: number | string): Promise<void> {
     method: "DELETE",
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Delete failed (${res.status}) ${txt}`);
+  }
 }
 
 // 预览（返回 {file_url}）
@@ -193,7 +202,7 @@ export async function getPreviewUrl(id: number | string): Promise<string> {
   return data?.file_url;
 }
 
-// 下载（真实下载接口，二进制）
+// 下载（真实下载接口，二进制，保留旧函数以兼容）
 export async function downloadAsset(id: number | string): Promise<Blob> {
   const res = await fetch(`${BASE_URL}/api/assets/${id}/download/`, {
     method: "GET",
@@ -201,6 +210,41 @@ export async function downloadAsset(id: number | string): Promise<Blob> {
   });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   return await res.blob();
+}
+
+// ✅ 更稳的下载：同时解析响应头拿“真实文件名”
+export async function downloadAssetBlob(
+  id: number | string
+): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${BASE_URL}/api/assets/${id}/download/`, {
+    method: "GET",
+    headers: authHeaders(),
+  });
+
+  // 预先拿 blob（即使失败也能读取文本）
+  const blob = await res.blob();
+
+  if (!res.ok) {
+    let t = "";
+    try {
+      t = await blob.text();
+    } catch {}
+    throw new Error(`Download failed (${res.status}) ${t}`);
+  }
+
+  const cd = res.headers.get("content-disposition") || "";
+  let filename = "download";
+  const m =
+    /filename\*=UTF-8''([^;]+)/i.exec(cd) ||
+    /filename="?([^"]+)"?/i.exec(cd);
+  if (m && m[1]) {
+    try {
+      filename = decodeURIComponent(m[1]);
+    } catch {
+      filename = m[1];
+    }
+  }
+  return { blob, filename };
 }
 
 // -------------------- Tags API --------------------
@@ -216,19 +260,32 @@ export const listTags = getTags;
 
 // -------------------- Versions API --------------------
 
+// 统一把后端的 created_at 映射成 uploaded_at（兼容旧代码）
+function mapVersion(v: any): AssetVersion {
+  const created = v?.created_at ?? v?.uploaded_at ?? "";
+  return {
+    id: v.id,
+    version: v.version,
+    file: v.file,
+    file_url: v.file_url,
+    created_at: created,
+    uploaded_by: v.uploaded_by ?? null,
+    note: v.note ?? null,
+    uploaded_at: created,
+  };
+}
+
 export async function getAssetVersions(assetId: number | string): Promise<AssetVersion[]> {
-  const list = await apiRequest<Omit<AssetVersion, "created_at">[]>(
-    `/api/assets/${assetId}/versions/`
-  );
-  return (list ?? []).map((v) => ({ created_at: v.uploaded_at, ...v }));
+  const list = await apiRequest<any[]>(`/api/assets/${assetId}/versions/`);
+  return (list ?? []).map(mapVersion);
 }
 
 export async function getLatestVersion(assetId: number | string): Promise<AssetVersion | null> {
+  // 后端未提供 /latest/ 时，前端自行从列表里取最大 version
   try {
-    const v = await apiRequest<Omit<AssetVersion, "created_at">>(
-      `/api/assets/${assetId}/versions/latest/`
-    );
-    return { created_at: v.uploaded_at, ...v };
+    const list = await getAssetVersions(assetId);
+    if (!list.length) return null;
+    return list.sort((a, b) => b.version - a.version)[0];
   } catch {
     return null;
   }
@@ -244,31 +301,59 @@ export async function uploadNewVersion(
     fd = fileOrForm;
   } else {
     fd = new FormData();
-    fd.append("file", fileOrForm as File);
+    fd.append("file", fileOrForm as File); // ✅ 关键是 'file'
     if (note) fd.append("note", note);
   }
-  const res = await fetch(`${BASE_URL}/api/assets/${assetId}/versions/`, {
+
+  // 先尝试新路由 /versions/
+  let res = await fetch(`${BASE_URL}/api/assets/${assetId}/versions/`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeaders(), // 不手动设 Content-Type
     body: fd,
   });
-  if (!res.ok) throw new Error(`Upload version failed (${res.status})`);
-  const v = (await res.json()) as Omit<AssetVersion, "created_at">;
-  return { created_at: v.uploaded_at, ...v };
+
+  // 如果失败，打印后端信息并尝试兼容旧路由 /upload_version/
+  if (!res.ok) {
+    const bodyTxt = await res.text().catch(() => "");
+    // fallback
+    const res2 = await fetch(`${BASE_URL}/api/assets/${assetId}/upload_version/`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    });
+    if (!res2.ok) {
+      const bodyTxt2 = await res2.text().catch(() => "");
+      throw new Error(
+        `Upload version failed (${res.status}) ${bodyTxt} | fallback (${res2.status}) ${bodyTxt2}`
+      );
+    }
+    const v2 = await res2.json();
+    return mapVersion(v2);
+  }
+
+  const v = await res.json();
+  return mapVersion(v);
 }
 
 export async function restoreVersion(
   assetId: number | string,
   version: number
 ): Promise<AssetVersion> {
-  const res = await fetch(`${BASE_URL}/api/assets/${assetId}/versions/${version}/restore/`, {
+  // ✅ 使用后端实际提供的路由：/restore_version/?version=#
+  const url = `${BASE_URL}/api/assets/${assetId}/restore_version/?version=${encodeURIComponent(
+    String(version)
+  )}`;
+  const res = await fetch(url, {
     method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({}),
+    headers: authHeaders(),
+    body: null,
   });
-  if (!res.ok) throw new Error(`Restore failed (${res.status})`);
-  const v = (await res.json()) as Omit<AssetVersion, "created_at">;
-  return { created_at: v.uploaded_at, ...v };
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Restore failed (${res.status}) ${txt}`);
+  }
+  const v = await res.json();
+  return mapVersion(v);
 }
 
 // -------------------- 小工具 --------------------
@@ -277,7 +362,10 @@ export function saveBlob(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename;
+  a.download = filename || "download";
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   window.URL.revokeObjectURL(url);
 }
