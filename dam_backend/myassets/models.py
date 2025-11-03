@@ -47,3 +47,17 @@ class Asset(models.Model):
         verbose_name = "Asset"
         verbose_name_plural = "Assets"
         ordering = ['-upload_date']
+
+
+class AssetVersion(models.Model):
+    asset = models.ForeignKey('Asset', on_delete=models.CASCADE, related_name='versions')
+    file = models.FileField(upload_to='assets/versions/%Y/%m/%d/')
+    version = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ['-version', '-created_at']
+
+    def __str__(self):
+        return f"{self.asset.name} v{self.version}"

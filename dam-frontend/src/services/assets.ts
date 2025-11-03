@@ -3,6 +3,15 @@ import { apiRequest, BASE_URL } from "@/lib/api";
 
 export type AssetType = "image" | "video" | "pdf" | "document" | string;
 
+
+export async function createTag(name: string) {
+  return await apiRequest("/api/tags/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
 export interface Tag {
   id: number;
   name: string;

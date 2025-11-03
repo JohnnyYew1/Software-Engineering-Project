@@ -78,7 +78,7 @@ class AssetViewSet(viewsets.ModelViewSet):
         "asset_type": ["exact"],
         "uploaded_by": ["exact"],
         "upload_date": ["exact", "gte", "lte"],
-        "tags": ["exact", "in"],  # 按ID过滤，?tags=1,2 或 ?tags=1&tags=2
+        
     }
 
     ordering_fields = ["upload_date", "name", "download_count", "view_count"]
@@ -95,19 +95,31 @@ class AssetViewSet(viewsets.ModelViewSet):
 
         date_from = q.get("date_from")
         date_to = q.get("date_to")
-        tag_names_csv = q.get("tag_names")  # ← 这里改用 tag_names，避免与 filterset_fields 冲突
+        tag_names_csv = q.get("tag_names")
 
         if date_from:
             qs = qs.filter(upload_date__date__gte=date_from)
         if date_to:
             qs = qs.filter(upload_date__date__lte=date_to)
 
+        # ✅ 新增：Tag ID 多选（OR 逻辑）支持 ?tags=1&tags=2
+        tag_ids = q.getlist("tags")
+        if tag_ids:
+            try:
+                ids = [int(x) for x in tag_ids if str(x).isdigit()]
+                if ids:
+                    qs = qs.filter(tags__id__in=ids).distinct()
+            except ValueError:
+                pass  # 忽略非法值，避免 400
+
+        # 你原来的“按名称过滤”
         if tag_names_csv:
             names = [t.strip() for t in tag_names_csv.split(",") if t.strip()]
             if names:
                 qs = qs.filter(tags__name__in=names).distinct()
 
         return qs
+
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
