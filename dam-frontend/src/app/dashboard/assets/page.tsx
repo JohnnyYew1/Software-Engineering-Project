@@ -61,6 +61,9 @@ export default function AssetsPage() {
     ordering: '-upload_date',
   });
 
+  // 独立的搜索输入框内容（只有点 Search 才应用到 filters.search）
+  const [searchInput, setSearchInput] = useState<string>('');
+
   // —— 加载函数 —— //
   const loadAssets = async (_filters: Filters = filters) => {
     try {
@@ -86,21 +89,6 @@ export default function AssetsPage() {
     loadAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // 搜索输入节流（简易）
-  const [searchTyping, setSearchTyping] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setFilters((prev) => {
-        const next = { ...prev, search: searchTyping };
-        // 输入完 300ms 自动触发
-        loadAssets(next);
-        return next;
-      });
-    }, 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTyping]);
 
   // 图片加载错误
   const handleImageError = (assetId: number) => {
@@ -145,15 +133,33 @@ export default function AssetsPage() {
         <VStack align="stretch" gap={4}>
           {/* 搜索 + 类型 + 排序 */}
           <HStack align="flex-end" gap={4} flexWrap="wrap">
-            <Box flex={1} minW="220px">
+            <Box flex={1} minW="240px">
               <Text fontSize="sm" mb={1} color="gray.600">
                 Search
               </Text>
-              <Input
-                placeholder="Search by name/description/tag"
-                defaultValue={filters.search}
-                onChange={(e) => setSearchTyping(e.target.value)}
-              />
+              <HStack>
+                <Input
+                  placeholder="Search by name/description/tag"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                />
+                <Button
+                  onClick={() => {
+                    const next: Filters = { ...filters, search: searchInput };
+                    setFilters(next);
+                    loadAssets(next); // ✅ 只有点击才发请求
+                  }}
+                  colorScheme="blue"
+                >
+                  Search
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setSearchInput('')} // 只清输入框，不触发请求
+                >
+                  Clear
+                </Button>
+              </HStack>
             </Box>
 
             <Box minW="200px">
@@ -166,7 +172,7 @@ export default function AssetsPage() {
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                   const next = { ...filters, asset_type: e.target.value };
                   setFilters(next);
-                  loadAssets(next);
+                  loadAssets(next); // 类型变化立即生效
                 }}
                 style={{
                   width: '100%',
@@ -194,7 +200,7 @@ export default function AssetsPage() {
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                   const next = { ...filters, ordering: e.target.value };
                   setFilters(next);
-                  loadAssets(next);
+                  loadAssets(next); // 排序变化立即生效
                 }}
                 style={{
                   width: '100%',
@@ -218,9 +224,9 @@ export default function AssetsPage() {
                   asset_type: '',
                   ordering: '-upload_date',
                 };
-                setSearchTyping('');
+                setSearchInput('');
                 setFilters(next);
-                loadAssets(next);
+                loadAssets(next); // 重置并刷新
               }}
               variant="outline"
               loading={loading}
@@ -231,8 +237,9 @@ export default function AssetsPage() {
         </VStack>
       </Box>
     ),
+    // 依赖于 filters 与 loading（searchInput 只影响输入框，不必重算整块）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filters, loading]
+    [filters, loading, searchInput]
   );
 
   // —— 渲染 —— //
@@ -289,6 +296,7 @@ export default function AssetsPage() {
           </Heading>
           <Text color="gray.600">
             {assets.length} asset{assets.length !== 1 ? 's' : ''} found in system
+            {filters.search ? ` for "${filters.search}"` : ''}
           </Text>
         </Box>
 
