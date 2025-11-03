@@ -1,3 +1,4 @@
+// src/app/dashboard/upload/page.tsx
 'use client';
 
 import {
@@ -13,20 +14,28 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { permissions } from '@/utils/permissions';
-import { apiRequest } from '@/lib/api'; // 使用你已有的 apiRequest
+import { apiRequest } from '@/lib/api';
+import { listTags } from '@/services/assets';
+
+type Tag = { id: number; name: string; color?: string };
 
 export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 原有元数据
   const [assetData, setAssetData] = useState({
     name: '',
     description: '',
-    tags: '',
     brand: '',
     assetNo: '',
   });
+
+  // 新增：标签数据
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -53,6 +62,19 @@ export default function UploadPage() {
     }
   }, [message]);
 
+  // 载入标签（统一来自后端 Tag 表）
+  useEffect(() => {
+    async function fetchTags() {
+      try {
+        const tags = await listTags();
+        setAllTags(tags || []);
+      } catch {
+        // 静默失败，不阻塞上传主流程
+      }
+    }
+    fetchTags();
+  }, []);
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(true);
@@ -71,12 +93,12 @@ export default function UploadPage() {
     }
   };
 
-  const VALID_EXT = ['jpg', 'jpeg', 'png', 'glb', 'gltf', 'obj', 'mp4'];
-
   const handleFileSelect = (file: File) => {
-    // 支持的文件类型：图片(JPG, PNG), 3D模型(GLB/GLTF/OBJ), 视频(MP4)
+    // 支持的文件类型：图片(JPG, PNG), 3D模型(GLB), 视频(MP4)
+    const validExtensions = ['jpg', 'jpeg', 'png', 'glb', 'mp4'];
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
-    if (fileExtension && VALID_EXT.includes(fileExtension)) {
+
+    if (fileExtension && validExtensions.includes(fileExtension)) {
       setSelectedFile(file);
       // 自动填充资产名称（使用文件名去掉扩展名）
       const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
@@ -88,7 +110,7 @@ export default function UploadPage() {
     } else {
       setMessage({
         type: 'error',
-        text: 'Please upload supported file types: JPG, PNG (images), GLB/GLTF/OBJ (3D), or MP4 (videos)',
+        text: 'Please upload supported file types: JPG, PNG, GLB (3D models), or MP4 (videos)',
       });
     }
   };
@@ -109,7 +131,14 @@ export default function UploadPage() {
       }));
     };
 
-  // 真正上传：FormData + apiRequest('/api/assets/', { method: 'POST', isFormData: true })
+  // 标签多选：从 <select multiple> 读取多个值
+  const handleSelectTags = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const options = Array.from(e.target.selectedOptions);
+    const ids = options.map((opt) => Number(opt.value));
+    setSelectedTagIds(ids);
+  };
+
+  // 真正上传
   const handleUpload = async () => {
     if (!selectedFile) {
       setMessage({ type: 'error', text: 'Please select a file to upload' });
@@ -124,30 +153,22 @@ export default function UploadPage() {
 
     try {
       const fd = new FormData();
-      // 与后端字段对齐（按你后端 AssetSerializer 的命名）
       fd.append('name', assetData.name);
       fd.append('file', selectedFile);
 
       // 资产类型：根据文件后缀简单判断
       const ext = selectedFile.name.split('.').pop()?.toLowerCase() || '';
       const assetType =
-        ['jpg', 'jpeg', 'png'].includes(ext)
-          ? 'image'
-          : ext === 'mp4'
-          ? 'video'
-          : ['glb', 'gltf', 'obj'].includes(ext)
-          ? '3d_model'
-          : 'document';
+        ['jpg', 'jpeg', 'png'].includes(ext) ? 'image' : ext === 'mp4' ? 'video' : 'document';
       fd.append('asset_type', assetType);
 
       if (assetData.description) fd.append('description', assetData.description);
-
-      // 额外元数据（若你的后端有这些字段就传；没有也不会报错）
       if (assetData.brand) fd.append('brand', assetData.brand);
       if (assetData.assetNo) fd.append('asset_no', assetData.assetNo);
 
-      // tags：后端若是 ManyToMany 的 id 列表，这里可做名称->id 映射；此处先原样传递
-      if (assetData.tags) fd.append('tags_raw', assetData.tags);
+      // ✅ 关键：把选中的标签 ID 列表传给后端（AssetSerializer 的 tag_ids）
+      // FormData 里数组传法：多次 append 同名字段
+      selectedTagIds.forEach((id) => fd.append('tag_ids', String(id)));
 
       await apiRequest('/api/assets/', {
         method: 'POST',
@@ -160,10 +181,10 @@ export default function UploadPage() {
       setAssetData({
         name: '',
         description: '',
-        tags: '',
         brand: '',
         assetNo: '',
       });
+      setSelectedTagIds([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
 
       setMessage({
@@ -185,10 +206,10 @@ export default function UploadPage() {
     setAssetData({
       name: '',
       description: '',
-      tags: '',
       brand: '',
       assetNo: '',
     });
+    setSelectedTagIds([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -199,12 +220,12 @@ export default function UploadPage() {
   const getFileTypeDisplay = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase();
     if (['jpg', 'jpeg', 'png'].includes(ext || '')) return 'Image';
+    if (ext === 'glb') return '3D Model';
     if (ext === 'mp4') return 'Video';
-    if (ext === 'glb' || ext === 'gltf' || ext === 'obj') return '3D Model';
     return 'File';
   };
 
-  // 无权限时的提示（保持你的原样式）
+  // 无权限时的提示
   if (!permissions.canUpload()) {
     return (
       <VStack align="stretch" gap={6}>
@@ -270,7 +291,7 @@ export default function UploadPage() {
             {selectedFile ? selectedFile.name : 'or click to select files from your computer'}
           </Text>
           <Text fontSize="sm" color="gray.500">
-            Supports: JPG, PNG (Images), GLB/GLTF/OBJ (3D Models), MP4 (Videos)
+            Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos)
           </Text>
           {!selectedFile && <Button colorScheme="blue">Select Files</Button>}
         </VStack>
@@ -279,7 +300,7 @@ export default function UploadPage() {
           type="file"
           ref={fileInputRef}
           onChange={handleFileInput}
-          accept=".jpg,.jpeg,.png,.glb,.gltf,.obj,.mp4"
+          accept=".jpg,.jpeg,.png,.glb,.mp4"
           display="none"
         />
       </Box>
@@ -347,15 +368,33 @@ export default function UploadPage() {
               />
             </Box>
 
+            {/* ✅ 标签多选（从后端 Tag 字典拉取） */}
             <Box>
               <Text fontWeight="medium" mb={2}>
-                Tags
+                Tags (choose from existing)
               </Text>
-              <Input
-                placeholder="Add tags (comma separated)"
-                value={assetData.tags}
-                onChange={handleInputChange('tags')}
-              />
+              <select
+                multiple
+                value={selectedTagIds.map(String)}
+                onChange={handleSelectTags}
+                style={{
+                  width: '100%',
+                  minHeight: '120px',
+                  padding: '8px',
+                  borderRadius: '8px',
+                  border: '1px solid #E2E8F0',
+                  background: '#fff',
+                }}
+              >
+                {allTags.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <Text mt={2} fontSize="sm" color="gray.500">
+                * Tags are managed by Admin in Django Admin. Editors can only select existing tags.
+              </Text>
             </Box>
 
             <HStack gap={4} mt={4}>

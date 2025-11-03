@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { Asset as AssetType } from '@/services/assets';
-import { getAssets, downloadAsset } from '@/services/assets';
+import type { Asset as AssetType, Tag } from '@/services/assets';
+import { getAssets, downloadAsset, listTags } from '@/services/assets';
 import {
   Box,
   Container,
@@ -18,16 +18,14 @@ import {
   Badge,
   Spinner,
   Center,
-  Input,
+  Input
 } from '@chakra-ui/react';
 
-// 自定义元素名（避免 TS 校验）
-const ModelViewer: any = 'model-viewer';
 
-// 禁 SSR 的 OBJ+MTL 预览
+const ModelViewer: any = 'model-viewer';
 const ThreeObjMtlViewer = dynamic(() => import('@/components/ThreeObjMtlViewer'), { ssr: false });
 
-// —— 简易 Toast（沿用你的风格）——
+// 简易 toast：保持你的风格
 const showToast = (
   title: string,
   status: 'success' | 'error' | 'info' | 'warning',
@@ -40,14 +38,12 @@ const showToast = (
   else alert(`Info: ${title} - ${description}`);
 };
 
-// 将后端相对路径拼接成可访问 URL
 const toUrl = (raw?: string) => {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `http://127.0.0.1:8000${raw.replace(/^\/?/, '/')}`;
 };
 
-// 下拉选项
 const TYPE_OPTIONS = [
   { label: 'All', value: '' },
   { label: '3D Model', value: '3d_model' },
@@ -66,9 +62,12 @@ type Filters = {
   search: string;
   asset_type: string;
   ordering: string;
+  date_from?: string;
+  date_to?: string;
+  tag_ids?: number[];
 };
 
-// 扩展名工具
+// 工具：解析扩展名
 const getExt = (url: string) => {
   try {
     const pathname = new URL(url, 'http://dummy').pathname.toLowerCase();
@@ -166,6 +165,142 @@ function AssetPreviewBox({
   );
 }
 
+/** 下拉式多选标签（点击 Done 自动应用；OR 过滤；无第三方库） */
+function TagMultiDropdown({
+  all,
+  selected,
+  onChange,
+  onApply,
+  disabled,
+  buttonLabel = 'Tags',
+}: {
+  all: Tag[];
+  selected: number[];
+  onChange: (nextIds: number[]) => void;
+  onApply: () => void; // 点击 Done 时调用
+  disabled?: boolean;
+  buttonLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const selectedNames = useMemo(() => {
+    const set = new Set(selected);
+    return all.filter(t => set.has(t.id)).map(t => t.name);
+  }, [all, selected]);
+
+  const toggleId = (id: number) => {
+    const has = selected.includes(id);
+    if (has) onChange(selected.filter(x => x !== id));
+    else onChange([...selected, id]);
+  };
+
+  return (
+    <Box position="relative" ref={ref} minW="260px">
+      <Text fontSize="sm" mb={1} color="gray.600">Tags</Text>
+      <Button
+        onClick={() => setOpen(o => !o)}
+        variant="outline"
+        disabled={disabled}
+        width="100%"
+        justifyContent="space-between"
+      >
+        <Box as="span">
+          {buttonLabel}
+          {selected.length > 0 ? ` (${selected.length})` : ''}
+        </Box>
+        <Box as="span" aria-hidden>▾</Box>
+      </Button>
+
+      {open && (
+        <Box
+          position="absolute"
+          zIndex={10}
+          mt={2}
+          w="100%"
+          maxH="260px"
+          overflow="auto"
+          bg="white"
+          border="1px solid #E2E8F0"
+          borderRadius="12px"
+          boxShadow="lg"
+          p={2}
+        >
+          {all.length === 0 ? (
+            <Text fontSize="sm" color="gray.500" p={2}>No tags</Text>
+          ) : (
+            <VStack align="stretch" gap={1}>
+              {all.map(tag => {
+                const checked = selected.includes(tag.id);
+                return (
+                  <label
+                    key={tag.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      background: checked ? '#F7FAFC' : 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleId(tag.id)}
+                    />
+                    <span style={{ fontSize: 14 }}>{tag.name}</span>
+                  </label>
+                );
+              })}
+            </VStack>
+          )}
+
+          <Box my={2} borderTop="1px solid #E2E8F0" />
+          <HStack justify="space-between">
+            <Button size="sm" variant="ghost" onClick={() => onChange([])}>
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              colorScheme="blue"
+              onClick={() => {
+                setOpen(false);
+                onApply(); // ✅ 点击 Done 自动应用
+              }}
+            >
+              Done
+            </Button>
+          </HStack>
+        </Box>
+      )}
+
+      {/* 选中标签摘要（单行省略） */}
+      {selectedNames.length > 0 && (
+        <Box
+          mt={2}
+          fontSize="sm"
+          color="gray.600"
+          title={selectedNames.join(', ')}
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {selectedNames.join(', ')}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 export default function AssetsPage() {
   const router = useRouter();
 
@@ -175,14 +310,36 @@ export default function AssetsPage() {
   const [downloadingIds, setDownloadingIds] = useState<number[]>([]);
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
 
+  // 标签字典 & 已选
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
+
   const [filters, setFilters] = useState<Filters>({
     search: '',
     asset_type: '',
     ordering: '-upload_date',
+    date_from: undefined,
+    date_to: undefined,
+    tag_ids: [],
   });
 
+  // 搜索与日期（尊重你之前需求：搜索输入不放“/tag”文案）
   const [searchInput, setSearchInput] = useState<string>('');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
 
+  // 拉取标签字典
+  useEffect(() => {
+    async function fetchTags() {
+      try {
+        const tags = await listTags();
+        setAllTags(tags || []);
+      } catch { /* ignore */ }
+    }
+    fetchTags();
+  }, []);
+
+  // 加载资产（注意：tags 传 “1,2,3” 保证 OR 且不出 400）
   const loadAssets = async (_filters: Filters = filters) => {
     try {
       setLoading(true);
@@ -191,6 +348,12 @@ export default function AssetsPage() {
         search: _filters.search || undefined,
         asset_type: _filters.asset_type || undefined,
         ordering: _filters.ordering || undefined,
+        date_from: _filters.date_from || undefined,
+        date_to: _filters.date_to || undefined,
+        // 🔧 关键修复：把 number[] → '1,2,3'（后端更稳，不会 400）
+        tags: _filters.tag_ids && _filters.tag_ids.length
+          ? _filters.tag_ids.join(',')
+          : undefined,
       });
       setAssets(data || []);
     } catch (err) {
@@ -224,16 +387,57 @@ export default function AssetsPage() {
     }
   };
 
+  // “Done”自动应用
+  const applyAllFilters = () => {
+    const next: Filters = {
+      ...filters,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      tag_ids: selectedTagIds,
+    };
+    setFilters(next);
+    loadAssets(next);
+  };
+
+  // 美化后的过滤区
   const FiltersBar = useMemo(
     () => (
-      <Box border="1px" borderColor="gray.200" borderRadius="md" p={4} bg="white">
+      <Box border="1px" borderColor="gray.200" borderRadius="xl" p={5} bg="white" boxShadow="sm">
         <VStack align="stretch" gap={4}>
-          <HStack align="flex-end" gap={4} flexWrap="wrap">
-            <Box flex={1} minW="240px">
+          {/* 标题行 */}
+          <HStack justify="space-between" align="center">
+            <Heading size="md">Filters</Heading>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDateFrom('');
+                setDateTo('');
+                setSelectedTagIds([]);
+                setSearchInput('');
+                const next: Filters = {
+                  search: '',
+                  asset_type: '',
+                  ordering: '-upload_date',
+                  date_from: undefined,
+                  date_to: undefined,
+                  tag_ids: [],
+                };
+                setFilters(next);
+                loadAssets(next);
+              }}
+            >
+              Reset
+            </Button>
+          </HStack>
+
+          {/* 控件区：四列在桌面呈现，移动端折行 */}
+          <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={4}>
+            {/* Search */}
+            <Box>
               <Text fontSize="sm" mb={1} color="gray.600">Search</Text>
               <HStack>
                 <Input
-                  placeholder="Search by name/description/tag"
+                  placeholder=""
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                 />
@@ -247,13 +451,11 @@ export default function AssetsPage() {
                 >
                   Search
                 </Button>
-                <Button variant="outline" onClick={() => setSearchInput('')}>
-                  Clear
-                </Button>
               </HStack>
             </Box>
 
-            <Box minW="200px">
+            {/* Type */}
+            <Box>
               <Text fontSize="sm" mb={1} color="gray.600">Type</Text>
               <select
                 value={filters.asset_type}
@@ -266,7 +468,7 @@ export default function AssetsPage() {
                   width: '100%',
                   height: '40px',
                   padding: '8px',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   border: '1px solid #E2E8F0',
                   background: 'white',
                 }}
@@ -277,6 +479,30 @@ export default function AssetsPage() {
               </select>
             </Box>
 
+            {/* Date From */}
+            <Box>
+              <Text fontSize="sm" mb={1} color="gray.600">Date From</Text>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            </Box>
+
+            {/* Date To */}
+            <Box>
+              <Text fontSize="sm" mb={1} color="gray.600">Date To</Text>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </Box>
+          </SimpleGrid>
+
+          {/* Tags 独占一行：下拉多选 + 选中摘要 + Done 自动应用 */}
+          <TagMultiDropdown
+            all={allTags}
+            selected={selectedTagIds}
+            onChange={setSelectedTagIds}
+            onApply={applyAllFilters} // ✅ Done 即应用
+            buttonLabel="Tags"
+          />
+
+          {/* 排序独立一行，贴近右侧 */}
+          <HStack justify="flex-end">
             <Box minW="220px">
               <Text fontSize="sm" mb={1} color="gray.600">Ordering</Text>
               <select
@@ -290,7 +516,7 @@ export default function AssetsPage() {
                   width: '100%',
                   height: '40px',
                   padding: '8px',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   border: '1px solid #E2E8F0',
                   background: 'white',
                 }}
@@ -300,24 +526,11 @@ export default function AssetsPage() {
                 ))}
               </select>
             </Box>
-
-            <Button
-              onClick={() => {
-                const next: Filters = { search: '', asset_type: '', ordering: '-upload_date' };
-                setSearchInput('');
-                setFilters(next);
-                loadAssets(next);
-              }}
-              variant="outline"
-              loading={loading}
-            >
-              Reset
-            </Button>
           </HStack>
         </VStack>
       </Box>
     ),
-    [filters, loading, searchInput]
+    [filters, searchInput, dateFrom, dateTo, selectedTagIds, allTags]
   );
 
   if (loading) {
@@ -465,11 +678,10 @@ export default function AssetsPage() {
                         variant="outline"
                         flex={1}
                         onClick={() => {
-                          // 当前页跳去预览（不再开新窗口）
                           const url = new URL('/dashboard/preview', window.location.origin);
                           url.searchParams.set('id', String(asset.id));
                           url.searchParams.set('file', fileUrl);
-                          if (asset.asset_type) url.searchParams.set('type', asset.asset_type);
+                          if ((asset as any).asset_type) url.searchParams.set('type', (asset as any).asset_type);
                           router.push(url.toString());
                         }}
                       >

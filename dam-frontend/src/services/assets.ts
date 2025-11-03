@@ -30,35 +30,63 @@ export interface ListParams {
   search?: string;
   asset_type?: string;
   uploaded_by?: number;
-  tags?: number | number[];
   ordering?: string;
   page?: number;
+
+  date_from?: string;
+  date_to?: string;
+
+  // 两种方式任选其一（后端建议按 ID 过滤）：
+  tags?: string | number[];        // 按 ID 过滤（支持 ?tags=1&tags=2）
+  tag_names?: string | string[];   // 按名称过滤（支持 ?tag_names=a&tag_names=b）
 }
 
-function toQuery(params: Record<string, any>): string {
-  const q = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === "") return;
-    if (Array.isArray(v)) v.forEach((x) => q.append(k, String(x)));
-    else q.set(k, String(v));
-  });
-  const s = q.toString();
-  return s ? `?${s}` : "";
+/** 统一的 getAssets：将数组参数展开为多个 query 参数，避免 400 */
+export async function getAssets(params: ListParams = {}): Promise<AssetItem[]> {
+  const sp = new URLSearchParams();
+
+  if (params.search) sp.set("search", params.search);
+  if (params.asset_type) sp.set("asset_type", params.asset_type);
+  if (params.uploaded_by != null) sp.set("uploaded_by", String(params.uploaded_by));
+  if (params.ordering) sp.set("ordering", params.ordering);
+  if (params.page != null) sp.set("page", String(params.page));
+  if (params.date_from) sp.set("date_from", params.date_from);
+  if (params.date_to) sp.set("date_to", params.date_to);
+
+  // ✅ 关键：把 tags 展开成多个 query 参数 (?tags=1&tags=2)
+  if (params.tags) {
+    if (Array.isArray(params.tags)) {
+      params.tags.forEach((id) => sp.append("tags", String(id)));
+    } else if (typeof params.tags === "string") {
+      params.tags
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((v) => sp.append("tags", v));
+    }
+  }
+
+  // 兼容按名称过滤（同样展开）
+  if (params.tag_names) {
+    if (Array.isArray(params.tag_names)) {
+      params.tag_names.forEach((nm) => sp.append("tag_names", String(nm)));
+    } else if (typeof params.tag_names === "string") {
+      params.tag_names
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((v) => sp.append("tag_names", v));
+    }
+  }
+
+  const qs = sp.toString();
+  const url = `/api/assets/${qs ? `?${qs}` : ""}`;
+  return await apiRequest<AssetItem[]>(url);
 }
 
-export async function listAssets(params: ListParams = {}): Promise<AssetItem[]> {
-  const query = toQuery(params);
-  return await apiRequest<AssetItem[]>(`/api/assets/${query}`);
-}
-export const getAssets = listAssets;
+// 兼容旧名称：listAssets 等于 getAssets
+export const listAssets = getAssets;
 
-export async function getAsset(id: number): Promise<AssetItem> {
-  return await apiRequest<AssetItem>(`/api/assets/${id}/`);
-}
-
-/**
- * 方案1下载：GET /api/assets/:id/download/  → blob → 触发保存
- */
 export async function downloadAsset(id: number): Promise<void> {
   const url = `${BASE_URL}/api/assets/${id}/download/`;
   const token = localStorage.getItem("accessToken");
@@ -66,10 +94,7 @@ export async function downloadAsset(id: number): Promise<void> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const resp = await fetch(url, {
-    method: "GET",
-    headers,
-  });
+  const resp = await fetch(url, { method: "GET", headers });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(text || resp.statusText || "Download failed");
@@ -79,9 +104,7 @@ export async function downloadAsset(id: number): Promise<void> {
   let filename = "download";
   const cd = resp.headers.get("Content-Disposition") || "";
   const match = cd.match(/filename\*?=UTF-8''([^;]+)/i);
-  if (match && match[1]) {
-    filename = decodeURIComponent(match[1]);
-  }
+  if (match && match[1]) filename = decodeURIComponent(match[1]);
 
   const a = document.createElement("a");
   const objectUrl = URL.createObjectURL(blob);
@@ -93,7 +116,6 @@ export async function downloadAsset(id: number): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function listTags(): Promise<{id:number;name:string}[]> {
-  return await apiRequest('/api/tags/');
+export async function listTags(): Promise<{ id: number; name: string }[]> {
+  return await apiRequest("/api/tags/");
 }
-
