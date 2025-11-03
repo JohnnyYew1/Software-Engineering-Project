@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   Box,
   VStack,
@@ -11,6 +11,14 @@ import {
 } from '@chakra-ui/react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+
+type Role = 'admin' | 'editor' | 'viewer';
+
+type MenuItem = {
+  name: string;
+  path: string;
+  roles: Role[];
+};
 
 export default function DashboardLayout({
   children,
@@ -35,26 +43,29 @@ export default function DashboardLayout({
   };
 
   // 侧边菜单
-  const getMenuItems = () => {
-    const role = user?.role;
-    const baseItems = [
-      { name: 'Dashboard', path: '/dashboard', roles: ['admin', 'editor', 'viewer'] },
-      { name: 'Assets', path: '/dashboard/assets', roles: ['admin', 'editor', 'viewer'] },
-      { name: 'My Profile', path: '/dashboard/profile', roles: ['admin', 'editor', 'viewer'] },
+  const menuItems: MenuItem[] = useMemo(() => {
+    const role = (user?.role ?? 'viewer') as Role;
+
+    const base: MenuItem[] = [
+      { name: 'Dashboard',        path: '/dashboard',          roles: ['admin', 'editor', 'viewer'] },
+      { name: 'Assets',           path: '/dashboard/assets',   roles: ['admin', 'editor', 'viewer'] },
+      { name: 'My Profile',       path: '/dashboard/profile',  roles: ['admin', 'editor', 'viewer'] },
     ];
 
     if (role === 'editor') {
-      baseItems.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
+      // 插入到 Assets 后面
+      base.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
     }
     if (role === 'admin') {
-      baseItems.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] });
+      // 插入到 Dashboard 后面
+      base.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] });
     }
 
-    return baseItems.filter((it) => it.roles.includes(role as any));
-  };
+    return base.filter((it) => it.roles.includes(role));
+  }, [user?.role]);
 
-  const getRoleDescription = () => {
-    switch (user?.role) {
+  const getRoleDescription = (r?: Role) => {
+    switch (r) {
       case 'admin':
         return 'System Administrator - Manage users and all assets';
       case 'editor':
@@ -65,6 +76,13 @@ export default function DashboardLayout({
         return '';
     }
   };
+
+  const roleColor = (r?: Role) =>
+    r === 'admin' ? 'red.500' : r === 'editor' ? 'blue.500' : 'green.500';
+
+  // 判断高亮：当前路径是否等于或以菜单路径开头（支持子页）
+  const isActive = (path: string) =>
+    pathname === path || pathname.startsWith(path + '/');
 
   // 首屏：如果还在加载，就给一个中立态，不做跳转
   if (loading) {
@@ -93,14 +111,16 @@ export default function DashboardLayout({
       <HStack align="start" gap={0}>
         {/* 侧边栏 */}
         <Box
-          w="250px"
+          w={{ base: '220px', md: '250px' }}
           bg="white"
           minH="100vh"
           p={4}
           boxShadow="md"
+          position="sticky"
+          top={0}
         >
           <VStack align="stretch" gap={6}>
-            <Text fontSize="xl" fontWeight="bold" mb={4}>
+            <Text fontSize="xl" fontWeight="bold" mb={2}>
               DAM System
             </Text>
 
@@ -110,29 +130,23 @@ export default function DashboardLayout({
               </Text>
               <Text
                 fontSize="xs"
-                color={
-                  user.role === 'admin'
-                    ? 'red.500'
-                    : user.role === 'editor'
-                    ? 'blue.500'
-                    : 'green.500'
-                }
+                color={roleColor(user.role as Role)}
                 fontWeight="bold"
                 mb={1}
               >
-                Role: {user.role?.toUpperCase()}
+                Role: {(user.role || '').toUpperCase()}
               </Text>
               <Text fontSize="xs" color="gray.500">
-                {getRoleDescription()}
+                {getRoleDescription(user.role as Role)}
               </Text>
             </Box>
 
             <VStack align="stretch" gap={2}>
-              {getMenuItems().map((item) => (
+              {menuItems.map((item) => (
                 <Button
                   key={item.path}
-                  variant={pathname === item.path ? 'solid' : 'ghost'}
-                  colorScheme={pathname === item.path ? 'blue' : 'gray'}
+                  variant={isActive(item.path) ? 'solid' : 'ghost'}
+                  colorScheme={isActive(item.path) ? 'blue' : 'gray'}
                   justifyContent="start"
                   onClick={() => router.push(item.path)}
                   size="sm"
@@ -156,7 +170,7 @@ export default function DashboardLayout({
         </Box>
 
         {/* 主内容 */}
-        <Box flex={1} p={6}>
+        <Box flex={1} p={{ base: 4, md: 6 }}>
           {children}
         </Box>
       </HStack>

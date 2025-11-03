@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Asset, Tag, UserProfile
 
+
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tag

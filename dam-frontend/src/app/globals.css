@@ -1,26 +1,25 @@
-@import "tailwindcss";
+/* src/app/globals.css */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #f7fafc;      /* gray.50 */
+  --text: #1a202c;    /* gray.800 */
+  --card: #ffffff;    /* white */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* 如果你有暗色模式，可以按需加 data-theme 切换 */
+[data-theme="dark"] {
+  --bg: #0f1115;
+  --text: #e2e8f0;
+  --card: #141821;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
+
+/* 其它原有样式保持不变 */
