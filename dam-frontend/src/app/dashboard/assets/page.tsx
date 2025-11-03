@@ -1,7 +1,7 @@
-// src/app/dashboard/assets/page.tsx
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { Asset as AssetType } from '@/services/assets';
 import { getAssets, downloadAsset } from '@/services/assets';
@@ -21,13 +21,13 @@ import {
   Input,
 } from '@chakra-ui/react';
 
-// 用大写组件名包装，自定义元素不会触发 TS 检查
+// 自定义元素名（避免 TS 校验）
 const ModelViewer: any = 'model-viewer';
 
-// 动态导入 Three OBJ+MTL 预览（禁 SSR）
+// 禁 SSR 的 OBJ+MTL 预览
 const ThreeObjMtlViewer = dynamic(() => import('@/components/ThreeObjMtlViewer'), { ssr: false });
 
-// —— Toast（保持你原来的风格）——
+// —— 简易 Toast（沿用你的风格）——
 const showToast = (
   title: string,
   status: 'success' | 'error' | 'info' | 'warning',
@@ -40,7 +40,7 @@ const showToast = (
   else alert(`Info: ${title} - ${description}`);
 };
 
-// 将后端相对路径拼成可访问 URL
+// 将后端相对路径拼接成可访问 URL
 const toUrl = (raw?: string) => {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
@@ -167,6 +167,8 @@ function AssetPreviewBox({
 }
 
 export default function AssetsPage() {
+  const router = useRouter();
+
   const [assets, setAssets] = useState<AssetType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -458,7 +460,19 @@ export default function AssetsPage() {
 
                     {/* 操作按钮 */}
                     <HStack gap={2}>
-                      <Button size="sm" variant="outline" flex={1} onClick={() => window.open(fileUrl, '_blank')}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        flex={1}
+                        onClick={() => {
+                          // 当前页跳去预览（不再开新窗口）
+                          const url = new URL('/dashboard/preview', window.location.origin);
+                          url.searchParams.set('id', String(asset.id));
+                          url.searchParams.set('file', fileUrl);
+                          if (asset.asset_type) url.searchParams.set('type', asset.asset_type);
+                          router.push(url.toString());
+                        }}
+                      >
                         Preview
                       </Button>
                       <Button
