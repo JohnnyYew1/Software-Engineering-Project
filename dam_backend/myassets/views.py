@@ -69,17 +69,19 @@ class AssetViewSet(viewsets.ModelViewSet):
     serializer_class = AssetSerializer
     permission_classes = [AssetPermission]  # ✅ 使用你自定义权限
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+
     search_fields = ["name", "description", "tags__name"]
 
-    # ⚠ 修复 created_at：仅保留模型真实字段，并增强 upload_date 支持范围过滤
+    # ✅ 仅保留模型真实字段；支持 upload_date 范围过滤
     filterset_fields = {
-        "asset_type": ["exact"],
+        "asset_type": ["exact"],        # '3d_model' | 'image' | 'video'
         "uploaded_by": ["exact"],
         "upload_date": ["exact", "gte", "lte"],
         "tags": ["exact"],
     }
 
-    ordering_fields = ["upload_date", "name"]
+    # ✅ 新增 download_count / view_count 供前端 Popular 等排序使用
+    ordering_fields = ["upload_date", "name", "download_count", "view_count"]
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -111,7 +113,7 @@ class AssetViewSet(viewsets.ModelViewSet):
     def download(self, request, pk=None):
         """
         ✅ 真正的「下载接口」：以附件形式返回二进制流，带 Content-Disposition。
-        —— 前端用 fetch 携带 JWT，拿到 blob 后触发保存。
+        —— 前端用 fetch 携带凭证拿到 blob 后触发保存。
         """
         asset = self.get_object()
         if not asset.file:
@@ -119,7 +121,6 @@ class AssetViewSet(viewsets.ModelViewSet):
 
         # 计算文件名：优先用资产名，否则用文件名
         base_name = (asset.name or os.path.basename(asset.file.name)).strip()
-        # 如果没有扩展名，尝试从真实文件名补上
         root, ext = os.path.splitext(base_name)
         if not ext:
             _, real_ext = os.path.splitext(asset.file.name)
