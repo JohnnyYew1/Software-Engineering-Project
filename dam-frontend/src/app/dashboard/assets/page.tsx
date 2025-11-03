@@ -1,7 +1,7 @@
 // src/app/dashboard/assets/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Asset as AssetType } from '@/services/assets';
 import { getAssets, downloadAsset } from '@/services/assets';
 import {
@@ -17,9 +17,10 @@ import {
   Badge,
   Spinner,
   Center,
+  Input,
 } from '@chakra-ui/react';
 
-// 自定义 toast（保持你原写法）
+// —— Toast（保持你原本的风格）——
 const showToast = (
   title: string,
   status: 'success' | 'error' | 'info' | 'warning',
@@ -32,76 +33,209 @@ const showToast = (
   else alert(`Info: ${title} - ${description}`);
 };
 
-// 统一拼接可访问 URL（优先后端给的 file_url）
+// —— 拼接可访问 URL（优先后端 file_url）——
 const toUrl = (raw?: string) => {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `http://127.0.0.1:8000${raw.replace(/^\/?/, '/')}`;
 };
 
+type Filters = {
+  search: string;
+  asset_type: string;      // '', 'image', 'video', 'pdf', 'document'
+  ordering: string;        // '-upload_date', 'upload_date', 'name'
+};
+
 export default function AssetsPage() {
+  // —— 列表状态 —— //
   const [assets, setAssets] = useState<AssetType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<number[]>([]);
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
 
-  const loadAssets = async () => {
+  // —— 过滤状态 —— //
+  const [filters, setFilters] = useState<Filters>({
+    search: '',
+    asset_type: '',
+    ordering: '-upload_date',
+  });
+
+  // —— 加载函数 —— //
+  const loadAssets = async (_filters: Filters = filters) => {
     try {
       setLoading(true);
       setError(null);
-      const assetsData = await getAssets();
-      setAssets(assetsData || []);
+      const data = await getAssets({
+        search: _filters.search || undefined,
+        asset_type: _filters.asset_type || undefined,
+        ordering: _filters.ordering || undefined,
+      });
+      setAssets(data || []);
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Failed to load assets';
-      setError(errorMessage);
-      showToast('Load Failed', 'error', errorMessage);
+      const msg = err instanceof Error ? err.message : 'Failed to load assets';
+      setError(msg);
+      showToast('Load Failed', 'error', msg);
     } finally {
       setLoading(false);
     }
   };
 
+  // 首次进入加载
   useEffect(() => {
     loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 搜索输入节流（简易）
+  const [searchTyping, setSearchTyping] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFilters((prev) => {
+        const next = { ...prev, search: searchTyping };
+        // 输入完 300ms 自动触发
+        loadAssets(next);
+        return next;
+      });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTyping]);
 
   // 图片加载错误
   const handleImageError = (assetId: number) => {
     setImageErrors((prev) => new Set(prev).add(assetId));
   };
 
-  // 预览：优先 file_url，其次 file；都没有则报错
+  // 预览（新开页）
   const handlePreview = async (asset: AssetType) => {
     try {
       const previewUrl = toUrl((asset as any).file_url || asset.file);
       if (!previewUrl) throw new Error('No preview url');
       window.open(previewUrl, '_blank');
-    } catch (err) {
+    } catch {
       showToast('Preview Failed', 'error', 'Unable to preview asset');
     }
   };
 
-  /**
-   * ✅ 方案1（推荐）：services/assets.ts 里 downloadAsset(id) 已经用 blob 下载并触发保存
-   * 页面只需 await，不要再把它当作“返回直链字符串”的函数使用
-   */
+  // 下载（方案1：downloadAsset 内部完成 blob 保存）
   const handleDownload = async (asset: AssetType) => {
     try {
       setDownloadingIds((prev) => [...prev, asset.id]);
-
-      // 这里不再接收返回值（downloadAsset 返回 void）
       await downloadAsset(asset.id);
-
       showToast('Download Started', 'success', `${asset.name} is being downloaded`);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Download failed';
-      showToast('Download Failed', 'error', errorMessage);
+      const message = err instanceof Error ? err.message : 'Download failed';
+      showToast('Download Failed', 'error', message);
     } finally {
       setDownloadingIds((prev) => prev.filter((id) => id !== asset.id));
     }
   };
 
+  // —— 过滤栏 —— //
+  const FiltersBar = useMemo(
+    () => (
+      <Box
+        border="1px"
+        borderColor="gray.200"
+        borderRadius="md"
+        p={4}
+        bg="white"
+      >
+        <VStack align="stretch" gap={4}>
+          {/* 搜索 + 类型 + 排序 */}
+          <HStack align="flex-end" gap={4} flexWrap="wrap">
+            <Box flex={1} minW="220px">
+              <Text fontSize="sm" mb={1} color="gray.600">
+                Search
+              </Text>
+              <Input
+                placeholder="Search by name/description/tag"
+                defaultValue={filters.search}
+                onChange={(e) => setSearchTyping(e.target.value)}
+              />
+            </Box>
+
+            <Box minW="200px">
+              <Text fontSize="sm" mb={1} color="gray.600">
+                Type
+              </Text>
+              {/* 原生 select：onChange 绑在 select 自身，避免 Chakra Box 类型报错 */}
+              <select
+                value={filters.asset_type}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                  const next = { ...filters, asset_type: e.target.value };
+                  setFilters(next);
+                  loadAssets(next);
+                }}
+                style={{
+                  width: '100%',
+                  height: '40px',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: '1px solid #E2E8F0',
+                  background: 'white',
+                }}
+              >
+                <option value="">All</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="pdf">PDF</option>
+                <option value="document">Document</option>
+              </select>
+            </Box>
+
+            <Box minW="220px">
+              <Text fontSize="sm" mb={1} color="gray.600">
+                Ordering
+              </Text>
+              <select
+                value={filters.ordering}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                  const next = { ...filters, ordering: e.target.value };
+                  setFilters(next);
+                  loadAssets(next);
+                }}
+                style={{
+                  width: '100%',
+                  height: '40px',
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: '1px solid #E2E8F0',
+                  background: 'white',
+                }}
+              >
+                <option value="-upload_date">Newest</option>
+                <option value="upload_date">Oldest</option>
+                <option value="name">Name A→Z</option>
+              </select>
+            </Box>
+
+            <Button
+              onClick={() => {
+                const next: Filters = {
+                  search: '',
+                  asset_type: '',
+                  ordering: '-upload_date',
+                };
+                setSearchTyping('');
+                setFilters(next);
+                loadAssets(next);
+              }}
+              variant="outline"
+              loading={loading}
+            >
+              Reset
+            </Button>
+          </HStack>
+        </VStack>
+      </Box>
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filters, loading]
+  );
+
+  // —— 渲染 —— //
   if (loading) {
     return (
       <Container maxW="container.xl" py={8}>
@@ -139,7 +273,7 @@ export default function AssetsPage() {
           </Box>
         </Box>
 
-        <Button onClick={loadAssets} colorScheme="blue">
+        <Button onClick={() => loadAssets()} colorScheme="blue">
           Try Again
         </Button>
       </Container>
@@ -157,6 +291,9 @@ export default function AssetsPage() {
             {assets.length} asset{assets.length !== 1 ? 's' : ''} found in system
           </Text>
         </Box>
+
+        {/* 过滤栏 */}
+        {FiltersBar}
 
         {assets.length === 0 ? (
           <Center height="200px" bg="gray.50" borderRadius="md">
@@ -307,7 +444,7 @@ export default function AssetsPage() {
                       {asset.tags && asset.tags.length > 0 && (
                         <HStack gap={1} flexWrap="wrap">
                           {asset.tags.map((tag) => (
-                            <Badge key={tag.id} colorScheme="gray" size="sm">
+                            <Badge key={tag.id} colorScheme="gray">
                               {tag.name}
                             </Badge>
                           ))}
@@ -331,7 +468,7 @@ export default function AssetsPage() {
                         colorScheme="green"
                         flex={1}
                         onClick={() => handleDownload(asset)}
-                        loading={downloadingIds.includes(asset.id)}  // 保留你原本的 loading 写法
+                        loading={downloadingIds.includes(asset.id)}
                       >
                         {downloadingIds.includes(asset.id) ? 'Downloading...' : 'Download'}
                       </Button>

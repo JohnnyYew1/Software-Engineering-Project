@@ -92,3 +92,8 @@ export async function downloadAsset(id: number): Promise<void> {
   a.remove();
   URL.revokeObjectURL(objectUrl);
 }
+
+export async function listTags(): Promise<{id:number;name:string}[]> {
+  return await apiRequest('/api/tags/');
+}
+
