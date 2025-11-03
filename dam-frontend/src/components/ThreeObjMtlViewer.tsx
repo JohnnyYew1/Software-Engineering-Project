@@ -1,4 +1,3 @@
-// src/components/ThreeObjMtlViewer.tsx
 'use client';
 
 import React, { useEffect, useRef } from 'react';
@@ -109,7 +108,7 @@ const ThreeObjMtlViewer: React.FC<Props> = ({ srcUrl, width = '100%', height = '
     };
   }, []);
 
-  // 加载 OBJ+MTL
+  // 加载 OBJ(+MTL，失败则回退 OBJ-only)
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -121,9 +120,49 @@ const ThreeObjMtlViewer: React.FC<Props> = ({ srcUrl, width = '100%', height = '
     const { objUrl, mtlUrl } = derivePairUrls(srcUrl);
     const manager = new THREE.LoadingManager();
 
-    const mtlLoader = new MTLLoader(manager);
+    const loadObjOnly = () => {
+      const objLoader = new OBJLoader(manager);
+      objLoader.load(
+        objUrl,
+        (obj: THREE.Object3D) => {
+          obj.name = 'ObjMtlRoot';
 
-    // 让贴图相对路径以 mtl 所在目录为基准
+          // 默认材质（OBJ-only）
+          obj.traverse((child: any) => {
+            if (child.isMesh) {
+              child.material = new THREE.MeshStandardMaterial({
+                color: 0xb0b0b0,
+                metalness: 0.2,
+                roughness: 0.8,
+              });
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          // 居中并等比缩放
+          const box = new THREE.Box3().setFromObject(obj);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+          obj.position.sub(center);
+
+          const maxDim = Math.max(size.x, size.y, size.z);
+          if (maxDim > 0) obj.scale.setScalar(1.2 / maxDim);
+
+          scene.add(obj);
+        },
+        undefined,
+        (err: unknown) => {
+          console.error('OBJ load error (fallback):', err);
+          // 静默失败，避免打断 UI；外层会显示空预览容器
+        }
+      );
+    };
+
+    // 优先尝试 MTL
+    const mtlLoader = new MTLLoader(manager);
     const mtlBase = mtlUrl.substring(0, mtlUrl.lastIndexOf('/') + 1);
     mtlLoader.setResourcePath(mtlBase);
 
@@ -155,15 +194,16 @@ const ThreeObjMtlViewer: React.FC<Props> = ({ srcUrl, width = '100%', height = '
           },
           undefined,
           (err: unknown) => {
-            console.error('OBJ load error:', err);
-            alert('Failed to load OBJ. Ensure the .obj exists next to the .mtl with the same name.');
+            console.error('OBJ load error (with MTL):', err);
+            // OBJ 失败也回退到 OBJ-only
+            loadObjOnly();
           }
         );
       },
       undefined,
       (err: unknown) => {
-        console.error('MTL load error:', err);
-        alert('Failed to load MTL. Ensure the .mtl is accessible and texture paths are correct.');
+        console.warn('MTL load error, fallback to OBJ-only:', err);
+        loadObjOnly();
       }
     );
   }, [srcUrl]);

@@ -44,3 +44,9 @@ declare global {
 }
 
 export {}; // 确保这是一个模块
+
+declare namespace JSX {
+  interface IntrinsicElements {
+    'model-viewer': any;
+  }
+}

@@ -1,4 +1,3 @@
-// src/app/dashboard/upload/page.tsx
 'use client';
 
 import {
@@ -72,12 +71,12 @@ export default function UploadPage() {
     }
   };
 
-  const handleFileSelect = (file: File) => {
-    // 支持的文件类型：图片(JPG, PNG), 3D模型(GLB), 视频(MP4)
-    const validExtensions = ['jpg', 'jpeg', 'png', 'glb', 'mp4'];
-    const fileExtension = file.name.split('.').pop()?.toLowerCase();
+  const VALID_EXT = ['jpg', 'jpeg', 'png', 'glb', 'gltf', 'obj', 'mp4'];
 
-    if (fileExtension && validExtensions.includes(fileExtension)) {
+  const handleFileSelect = (file: File) => {
+    // 支持的文件类型：图片(JPG, PNG), 3D模型(GLB/GLTF/OBJ), 视频(MP4)
+    const fileExtension = file.name.split('.').pop()?.toLowerCase();
+    if (fileExtension && VALID_EXT.includes(fileExtension)) {
       setSelectedFile(file);
       // 自动填充资产名称（使用文件名去掉扩展名）
       const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
@@ -89,7 +88,7 @@ export default function UploadPage() {
     } else {
       setMessage({
         type: 'error',
-        text: 'Please upload supported file types: JPG, PNG, GLB (3D models), or MP4 (videos)',
+        text: 'Please upload supported file types: JPG, PNG (images), GLB/GLTF/OBJ (3D), or MP4 (videos)',
       });
     }
   };
@@ -129,10 +128,16 @@ export default function UploadPage() {
       fd.append('name', assetData.name);
       fd.append('file', selectedFile);
 
-      // 资产类型：根据文件后缀简单判断（可再细化）
+      // 资产类型：根据文件后缀简单判断
       const ext = selectedFile.name.split('.').pop()?.toLowerCase() || '';
       const assetType =
-        ['jpg', 'jpeg', 'png'].includes(ext) ? 'image' : ext === 'mp4' ? 'video' : 'document';
+        ['jpg', 'jpeg', 'png'].includes(ext)
+          ? 'image'
+          : ext === 'mp4'
+          ? 'video'
+          : ['glb', 'gltf', 'obj'].includes(ext)
+          ? '3d_model'
+          : 'document';
       fd.append('asset_type', assetType);
 
       if (assetData.description) fd.append('description', assetData.description);
@@ -141,14 +146,13 @@ export default function UploadPage() {
       if (assetData.brand) fd.append('brand', assetData.brand);
       if (assetData.assetNo) fd.append('asset_no', assetData.assetNo);
 
-      // tags：后端若是 ManyToMany 的 id 列表，你可以在这里把逗号分隔的名字转 id。
-      // 目前先把原始字符串传给后端可选字段（如果后端没有此字段可以删掉）
+      // tags：后端若是 ManyToMany 的 id 列表，这里可做名称->id 映射；此处先原样传递
       if (assetData.tags) fd.append('tags_raw', assetData.tags);
 
       await apiRequest('/api/assets/', {
         method: 'POST',
         body: fd,
-        isFormData: true, // 不要传 auth，避免 TS 报错
+        isFormData: true,
       });
 
       // 成功后的重置
@@ -195,12 +199,12 @@ export default function UploadPage() {
   const getFileTypeDisplay = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase();
     if (['jpg', 'jpeg', 'png'].includes(ext || '')) return 'Image';
-    if (ext === 'glb') return '3D Model';
     if (ext === 'mp4') return 'Video';
+    if (ext === 'glb' || ext === 'gltf' || ext === 'obj') return '3D Model';
     return 'File';
   };
 
-  // 无权限时的提示
+  // 无权限时的提示（保持你的原样式）
   if (!permissions.canUpload()) {
     return (
       <VStack align="stretch" gap={6}>
@@ -266,7 +270,7 @@ export default function UploadPage() {
             {selectedFile ? selectedFile.name : 'or click to select files from your computer'}
           </Text>
           <Text fontSize="sm" color="gray.500">
-            Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos)
+            Supports: JPG, PNG (Images), GLB/GLTF/OBJ (3D Models), MP4 (Videos)
           </Text>
           {!selectedFile && <Button colorScheme="blue">Select Files</Button>}
         </VStack>
@@ -275,7 +279,7 @@ export default function UploadPage() {
           type="file"
           ref={fileInputRef}
           onChange={handleFileInput}
-          accept=".jpg,.jpeg,.png,.glb,.mp4"
+          accept=".jpg,.jpeg,.png,.glb,.gltf,.obj,.mp4"
           display="none"
         />
       </Box>
@@ -358,7 +362,7 @@ export default function UploadPage() {
               <Button
                 colorScheme="blue"
                 onClick={handleUpload}
-                loading={uploading}          // Chakra v3 用 loading
+                loading={uploading}
                 loadingText="Uploading..."
               >
                 Upload Asset
