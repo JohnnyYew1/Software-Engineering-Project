@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "mkdir public 2> NUL & copy node_modules\\pdfjs-dist\\build\\pdf.worker.min.mjs public\\pdf.worker.min.mjs > NUL"
   },
   "dependencies": {
     "@chakra-ui/next-js": "^2.4.2",
@@ -16,6 +17,7 @@
     "axios": "^1.13.1",
     "framer-motion": "^12.23.24",
     "next": "16.0.1",
+    "pdfjs-dist": "^4.10.38",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "three": "^0.181.0"
@@ -31,4 +33,6 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   }
+
+  
 }

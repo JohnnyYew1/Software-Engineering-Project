@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { Asset as AssetType, Tag } from '@/services/assets';
+import PdfThumb from "@/components/PdfThumb"
 import {
   getAssets,
   listTags,
@@ -128,16 +129,80 @@ function AssetPreviewBox({
     );
   }
 
-  if (asset.asset_type === 'pdf') {
+const [pdfThumbFailed, setPdfThumbFailed] = useState(false);
+if (
+  asset.asset_type === "pdf" ||
+  (asset as any).mime_type?.toLowerCase()?.includes("pdf")
+) {
+  const fileUrl = toUrl((asset as any).file_url || asset.file);
+
+  // 1) 优先用 PDF.js 缩略图（第一页）
+  if (!pdfThumbFailed) {
     return (
-      <Center p={3}>
-        <VStack gap={1}>
-          <Text fontSize="lg" fontWeight="bold" color="red.600">PDF</Text>
-          <Text fontSize="xs" color="gray.600">Open in Preview</Text>
+      <Center p={2} w="100%" h="100%" bg="white">
+        <VStack gap={2} w="100%">
+          <PdfThumb
+            assetId={asset.id}
+            height={180}
+            onError={() => setPdfThumbFailed(true)}
+          />
+          <Text
+            fontSize="xs"
+            color="gray.600"
+            title={asset.name || "Document"}
+            // Chakra v3 没有 noOfLines，用 CSS clamp 代替
+            style={{
+              display: "-webkit-box",
+              WebkitLineClamp: 1,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {asset.name || "Document"}
+          </Text>
         </VStack>
       </Center>
     );
   }
+
+  // 2) 缩略图失败 → 退回 <object>（若被 X-Frame-Options 拒绝，会渲染下面的 fallback）
+  return (
+    <Center p={0} w="100%" h="100%" bg="white" position="relative">
+      <object
+        data={`${fileUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+        type="application/pdf"
+        width="100%"
+        height="100%"
+      >
+        {/* 3) 最终兜底：文字占位 */}
+        <VStack gap={1} p={3}>
+          <Text fontSize="lg" fontWeight="bold" color="red.600">
+            PDF
+          </Text>
+          <Text
+            fontSize="xs"
+            color="gray.600"
+            title={asset.name || "Document"}
+            style={{
+              display: "-webkit-box",
+              WebkitLineClamp: 1,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {asset.name || "Document"}
+          </Text>
+        </VStack>
+      </object>
+
+      {/* 右下角角标增强“封面感” */}
+      <Badge position="absolute" right="6px" bottom="6px" colorScheme="purple">
+        PDF
+      </Badge>
+    </Center>
+  );
+}
+
 
   if (asset.asset_type === '3d_model') {
     const fileUrl = toUrl((asset as any).file_url || asset.file);

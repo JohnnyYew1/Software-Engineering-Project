@@ -1,7 +1,6 @@
 "use client";
-
 import VersionHistory from "@/components/VersionHistory";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Box, Button, Flex, Input, Text, Badge } from "@chakra-ui/react";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -13,14 +12,13 @@ import {
   getAssetVersions,
   uploadNewVersion,
   restoreVersion,
-  downloadAsset,       // 兼容保留
-  downloadAssetBlob,   // ✅ 稳定下载（带文件名）
-  saveBlob,            // ✅ 保存工具
+  downloadAsset, // 用于拉取 PDF blob
+  saveBlob,      // 保留你已有的下载辅助
 } from "@/services/assets";
 import { authService } from "@/services/auth";
 import { BASE_URL } from "@/lib/api";
 
-// 3D 预览（与现有一致）
+// 3D 预览
 const ThreeDPreview = dynamic(() => import("@/components/ThreeDPreview"), { ssr: false });
 
 function ensureAbsolute(u?: string): string {
@@ -29,13 +27,29 @@ function ensureAbsolute(u?: string): string {
   if (u.startsWith("/")) return `${BASE_URL}${u}`;
   return `${BASE_URL}/${u}`;
 }
-function inferKind(url?: string, type?: string) {
+function inferKind(url?: string, type?: string, mime?: string) {
   const u = (url || "").toLowerCase();
   const t = (type || "").toLowerCase();
-  if (t.includes("image") || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(u)) return "image";
-  if (t.includes("video") || /\.(mp4|webm|ogg)$/.test(u)) return "video";
-  if (u.endsWith(".pdf") || t.includes("pdf")) return "pdf";
-  if (t.includes("3d") || /\.(gltf|glb|obj|mtl)$/.test(u)) return "3d";
+  const m = (mime || "").toLowerCase();
+
+  // 先用 mime_type（解决无后缀）
+  if (m.includes("pdf")) return "pdf";
+  if (m.startsWith("image/")) return "image";
+  if (m.startsWith("video/")) return "video";
+  if (m.includes("gltf") || m.includes("glb")) return "3d";
+
+  // 再用 asset_type
+  if (t.includes("pdf")) return "pdf";
+  if (t.includes("image")) return "image";
+  if (t.includes("video")) return "video";
+  if (t.includes("3d")) return "3d";
+
+  // 最后用 URL 后缀
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/.test(u)) return "image";
+  if (/\.(mp4|webm|ogg)(\?|$)/.test(u)) return "video";
+  if (/\.pdf(\?|$)/.test(u)) return "pdf";
+  if (/\.(gltf|glb|obj|mtl)(\?|$)/.test(u)) return "3d";
+
   return "other";
 }
 function ext(url?: string): string {
@@ -44,17 +58,6 @@ function ext(url?: string): string {
   return (m?.[1] ?? "").toLowerCase();
 }
 type TabKey = "history" | "upload";
-
-// 简单判断是否同源（和 BASE_URL 同域）
-function isSameOrigin(absUrl: string): boolean {
-  try {
-    const a = new URL(absUrl);
-    const b = new URL(BASE_URL);
-    return a.origin === b.origin;
-  } catch {
-    return false;
-  }
-}
 
 export default function PreviewPage() {
   const router = useRouter();
@@ -82,6 +85,10 @@ export default function PreviewPage() {
   const [file, setFile] = useState<File | null>(null);
 
   const [fatalPreviewErr, setFatalPreviewErr] = useState<string>("");
+
+  // ✅ 新增：PDF 的 blob: URL（避免 X-Frame-Options 阻挡）
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string>("");
+  const oldPdfBlobUrl = useRef<string>("");
 
   useEffect(() => {
     if (!assetId || Number.isNaN(assetId)) return;
@@ -125,8 +132,7 @@ export default function PreviewPage() {
       setLoadingList(true);
       setVersionsNote("");
       const list = await getAssetVersions(assetId);
-      const sorted = [...(list ?? [])].sort((a, b) => b.version - a.version); // ✅ 最新在最上
-      setVersions(sorted);
+      setVersions(list);
     } catch (e: any) {
       setVersions([]);
       setVersionsNote(
@@ -144,73 +150,65 @@ export default function PreviewPage() {
   }, [assetId]);
 
   const kind = useMemo(
-    () => inferKind(fileUrl, asset?.type ?? asset?.asset_type),
+    () => inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type),
     [fileUrl, asset]
   );
   const extname = useMemo(() => ext(fileUrl), [fileUrl]);
 
-  // ✅ 稳定下载“当前版本”
+  // ✅ 新增：当识别为 PDF 时，先用下载接口拿 blob，再生成 blob: URL 给 iframe 使用
+  useEffect(() => {
+    let revoked = false;
+
+    async function preparePdfBlob() {
+      if (!assetId || Number.isNaN(assetId)) return;
+      if (kind !== "pdf") {
+        // 清理之前的 blob
+        if (oldPdfBlobUrl.current) {
+          URL.revokeObjectURL(oldPdfBlobUrl.current);
+          oldPdfBlobUrl.current = "";
+        }
+        setPdfBlobUrl("");
+        return;
+      }
+      try {
+        const blob = await downloadAsset(assetId); // 已带 JWT 的后端下载接口
+        const url = URL.createObjectURL(blob);
+        // 清理旧的
+        if (oldPdfBlobUrl.current) {
+          URL.revokeObjectURL(oldPdfBlobUrl.current);
+        }
+        oldPdfBlobUrl.current = url;
+        if (!revoked) setPdfBlobUrl(url);
+      } catch {
+        // 留空：UI 会显示“Open in new tab / Download”按钮
+        if (!revoked) setPdfBlobUrl("");
+      }
+    }
+
+    preparePdfBlob();
+
+    return () => {
+      revoked = true;
+      if (oldPdfBlobUrl.current) {
+        URL.revokeObjectURL(oldPdfBlobUrl.current);
+        oldPdfBlobUrl.current = "";
+      }
+    };
+  }, [assetId, kind]);
+
   async function onDownloadCurrent() {
     if (!assetId || Number.isNaN(assetId)) return;
     try {
       setDownloading(true);
-      const { blob, filename } = await downloadAssetBlob(assetId);
-      const fallback =
+      const blob = await downloadAsset(assetId);
+      const filename =
         (asset?.name && asset.name.trim()) ||
         (fileUrl && fileUrl.split("/").pop()) ||
         `download${extname ? "." + extname : ""}`;
-      saveBlob(blob, filename || fallback);
-    } catch {
-      // 兜底简单版
-      try {
-        const blob = await downloadAsset(assetId);
-        const fallback =
-          (asset?.name && asset.name.trim()) ||
-          (fileUrl && fileUrl.split("/").pop()) ||
-          `download${extname ? "." + extname : ""}`;
-        saveBlob(blob, fallback);
-      } catch (e2: any) {
-        alert(`Download failed: ${e2?.message || e2}`);
-      }
+      saveBlob(blob, filename);
     } finally {
       setDownloading(false);
     }
-  }
-
-  // ✅ 新增：下载“历史版本”
-  async function onDownloadVersion(v: AssetVersion) {
-    const abs = ensureAbsolute(v.file_url);
-    if (!abs) {
-      // 没有 v.file_url 时兜底：下当前版本（至少给用户一个可用的动作）
-      await onDownloadCurrent();
-      return;
-    }
-
-    // 同源 → fetch blob 保存；跨域 → window.open
-    if (isSameOrigin(abs)) {
-      try {
-        const res = await fetch(abs, {
-          method: "GET",
-          headers: {}, // 如果这个 URL 需要鉴权，可在这里加 Authorization: Bearer <token>
-        });
-        if (!res.ok) throw new Error(res.statusText);
-        const blob = await res.blob();
-        // 尝试从响应头取文件名
-        const cd = res.headers.get("content-disposition") || "";
-        let filename = "";
-        const m = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(cd);
-        if (m && m[1]) filename = decodeURIComponent(m[1].replace(/\"/g, ""));
-        const fallback =
-          `v${v.version}-` +
-          ((v.file_url && v.file_url.split("/").pop()) || "version");
-        saveBlob(blob, filename || fallback);
-        return;
-      } catch {
-        // 如果失败，继续跨域方案
-      }
-    }
-    // 跨域或 fetch 失败 → 直接打开新窗口交给浏览器下载
-    window.open(abs, "_blank", "noopener,noreferrer");
   }
 
   async function onUploadNewVersion() {
@@ -279,8 +277,10 @@ export default function PreviewPage() {
   }
 
   function openPdfNewTab() {
-    if (!fileUrl) return;
-    window.open(fileUrl, "_blank", "noopener,noreferrer");
+    // 优先用 blob: URL（能跨源预览）；其次退回原始 URL
+    const u = pdfBlobUrl || fileUrl;
+    if (!u) return;
+    window.open(u, "_blank", "noopener,noreferrer");
   }
   async function downloadPdf() {
     if (!assetId || Number.isNaN(assetId)) return;
@@ -312,9 +312,7 @@ export default function PreviewPage() {
             <Text><b>Asset No:</b> {asset?.asset_no ?? "-"}</Text>
             <Text>
               <b>Type:</b>{" "}
-              <Badge colorScheme="purple">
-                {asset?.type ?? asset?.asset_type ?? "-"}
-              </Badge>
+              <Badge colorScheme="purple">{asset?.type ?? asset?.asset_type ?? "-"}</Badge>
             </Text>
             <Text><b>Uploaded:</b> {asset?.upload_date ?? "-"}</Text>
             <Text><b>Downloads:</b> {asset?.download_count ?? 0}</Text>
@@ -340,13 +338,29 @@ export default function PreviewPage() {
               <video src={fileUrl} controls style={{ maxHeight: 560, width: "100%" }} />
             )}
 
-            {!loadingPreview && fileUrl && kind === "pdf" && (
+            {/* ✅ 核心改动：优先用 blob: URL 在 iframe 内嵌，避免 refused to connect */}
+            {!loadingPreview && kind === "pdf" && (
               <Box>
                 <Flex gap="8px" mb="8px">
                   <Button onClick={openPdfNewTab}>Open in new tab</Button>
                   <Button variant="outline" onClick={downloadPdf}>Download PDF</Button>
                 </Flex>
-                <iframe src={fileUrl} style={{ width: "100%", height: 560, border: "none" }} />
+
+                {pdfBlobUrl ? (
+                  <iframe src={pdfBlobUrl} style={{ width: "100%", height: 560, border: "none" }} />
+                ) : (
+                  <Box color="gray.400">
+                  Unable to embed PDF inline (fetch failed or blocked). You can still{" "}
+                  <Button
+                    variant="plain"            // ✅ v3 支持：plain / ghost / solid / outline / subtle / surface
+                    onClick={openPdfNewTab}
+                    p={0} h="auto" minW="unset"   // 让按钮看起来像链接
+                  >
+                    <Text as="span" textDecor="underline">open it in a new tab</Text>
+                  </Button>{" "}
+                  or use the download button above.
+                </Box>
+                )}
               </Box>
             )}
 
@@ -383,7 +397,6 @@ export default function PreviewPage() {
               {loadingList ? "Refreshing..." : "Refresh"}
             </Button>
             <Text color="gray.400" fontSize="14px">最新在最上面</Text>
-            <Text color="gray.400" fontSize="14px">（Total: {versions.length}）</Text>
             {versionsNote && <Text color="gray.400" fontSize="14px">（{versionsNote}）</Text>}
           </Flex>
 
@@ -412,13 +425,13 @@ export default function PreviewPage() {
                     <td style={{ padding: "10px" }}>{v.note ?? "-"}</td>
                     <td style={{ padding: "10px" }}>
                       <Flex gap="8px">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onDownloadVersion(v)}
-                        >
-                          Download
-                        </Button>
+                        {v.file_url ? (
+                          <a href={ensureAbsolute(v.file_url)} download target="_blank" rel="noreferrer">
+                            <Button size="sm" variant="outline">Download</Button>
+                          </a>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled>No URL</Button>
+                        )}
                         {canWrite && (
                           <Button
                             size="sm"
