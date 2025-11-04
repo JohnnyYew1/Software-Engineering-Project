@@ -9,9 +9,10 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from django.db.models import Max
+from django.db.models import Max, F, Count, Q
 from django.db import transaction, IntegrityError, connection
 
+from django.core.cache import cache  # ★ 新增：用于 view_count 去抖
 import mimetypes
 import os
 import urllib.parse
@@ -71,6 +72,15 @@ def get_current_user(request):
     })
 
 
+# ---------------- 辅助 ----------------
+def _client_ip(request) -> str:
+    """简易获取客户端 IP（作业环境够用）"""
+    xff = request.META.get("HTTP_X_FORWARDED_FOR")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR") or "0.0.0.0"
+
+
 # ---------------- Assets ----------------
 class AssetViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all().select_related("uploaded_by").prefetch_related("tags")
@@ -81,7 +91,7 @@ class AssetViewSet(viewsets.ModelViewSet):
     # 搜索字段
     search_fields = ["name", "description", "tags__name"]
 
-    # 支持的过滤（保持你原本逻辑）
+    # 支持的过滤
     filterset_fields = {
         "asset_type": ["exact"],
         "uploaded_by": ["exact"],
@@ -95,11 +105,36 @@ class AssetViewSet(viewsets.ModelViewSet):
         ctx["request"] = self.request
         return ctx
 
-    # 角色判定（admin/editor 才能写）
     def _role(self, user):
         return getattr(getattr(user, "userprofile", None), "role", "viewer").lower()
 
-    # tag 名称过滤 + 多 tag id 过滤 + 日期范围（保留你原逻辑）
+    # ------- 标签过滤：支持 AND / OR -------
+    def _parse_tag_filters(self, q):
+        """
+        返回 (ids, mode)
+        - OR:  单个参数 CSV -> ?tags=1,2,3
+        - AND: 重复参数    -> ?tags=1&tags=2
+        """
+        repeated = [t for t in q.getlist("tags") if t]
+        if len(repeated) > 1:
+            ids = []
+            for item in repeated:
+                for p in str(item).split(","):
+                    p = p.strip()
+                    if p.isdigit():
+                        ids.append(int(p))
+            ids = sorted(set(ids))
+            return ids, "AND"
+
+        if len(repeated) == 1:
+            csv = repeated[0]
+            ids = [int(x) for x in str(csv).split(",") if x.strip().isdigit()]
+            ids = sorted(set(ids))
+            if ids:
+                return ids, "OR"
+
+        return [], None
+
     def get_queryset(self):
         qs = super().get_queryset()
         q = self.request.query_params
@@ -113,15 +148,18 @@ class AssetViewSet(viewsets.ModelViewSet):
         if date_to:
             qs = qs.filter(upload_date__date__lte=date_to)
 
-        # 支持 ?tags=1&tags=2
-        tag_ids = q.getlist("tags")
+        # ★ 关键：支持 AND / OR
+        tag_ids, mode = self._parse_tag_filters(q)
         if tag_ids:
-            try:
-                ids = [int(x) for x in tag_ids if str(x).isdigit()]
-                if ids:
-                    qs = qs.filter(tags__id__in=ids).distinct()
-            except ValueError:
-                pass
+            if mode == "AND":
+                qs = (
+                    qs.filter(tags__in=tag_ids)
+                      .annotate(match_count=Count("tags", filter=Q(tags__in=tag_ids), distinct=True))
+                      .filter(match_count=len(tag_ids))
+                      .distinct()
+                )
+            else:
+                qs = qs.filter(tags__in=tag_ids).distinct()
 
         if tag_names_csv:
             names = [t.strip() for t in tag_names_csv.split(",") if t.strip()]
@@ -153,7 +191,6 @@ class AssetViewSet(viewsets.ModelViewSet):
         if not asset.file:
             return Response({"detail": "No file"}, status=404)
 
-        # 推断下载文件名
         base_name = (asset.name or os.path.basename(asset.file.name)).strip()
         root, ext = os.path.splitext(base_name)
         if not ext:
@@ -163,11 +200,10 @@ class AssetViewSet(viewsets.ModelViewSet):
         mime, _ = mimetypes.guess_type(asset.file.name)
         mime = mime or "application/octet-stream"
 
-        # 计数
-        asset.download_count = (asset.download_count or 0) + 1
-        asset.save(update_fields=["download_count"])
+        # 原子自增下载数
+        Asset.objects.filter(pk=asset.pk).update(download_count=F("download_count") + 1)
+        asset.refresh_from_db(fields=["download_count"])
 
-        # 返回文件（暴露必要响应头，前端可读取文件名/长度）
         fh = asset.file.open("rb")
         resp = FileResponse(fh, as_attachment=True, filename=base_name)
         resp["Content-Type"] = mime
@@ -184,18 +220,16 @@ class AssetViewSet(viewsets.ModelViewSet):
             pass
         return resp
 
-    # ----------------- 版本历史：合并 GET 列表 & POST 上传 -----------------
+    # ---------------- 版本历史（列表 / 新版上传） ----------------
     @action(detail=True, methods=["get", "post"], permission_classes=[IsAuthenticated], url_path="versions")
     def versions(self, request, pk=None):
         asset = self.get_object()
 
-        # GET：列表（最新在最上）
         if request.method.lower() == "get":
             qs = asset.versions.select_related("uploaded_by").all().order_by("-version", "-created_at")
             ser = AssetVersionSerializer(qs, many=True, context={"request": request})
             return Response(ser.data)
 
-        # POST：上传新版本（key='file'，可选 'note'）
         if self._role(request.user) not in ("admin", "editor"):
             return Response({"detail": "Permission denied."}, status=403)
 
@@ -228,7 +262,6 @@ class AssetViewSet(viewsets.ModelViewSet):
                         note=note.strip() or None,
                     )
                 except Exception as inner:
-                    # 兼容数据库曾缺少 note 列的场景
                     msg = str(inner).lower()
                     if "column \"note\"" in msg or "column 'note'" in msg or "note does not exist" in msg:
                         relpath = getattr(uploaded_file, "name", str(uploaded_file))
@@ -247,7 +280,6 @@ class AssetViewSet(viewsets.ModelViewSet):
                     else:
                         raise
 
-                # 同步把 Asset 当前文件指向最新版本
                 asset.file = v.file
                 asset.save(update_fields=["file"])
 
@@ -260,7 +292,6 @@ class AssetViewSet(viewsets.ModelViewSet):
         ser = AssetVersionSerializer(v, context={"request": request})
         return Response(ser.data, status=201)
 
-    # 最新版本
     @action(detail=True, methods=["get"], permission_classes=[IsAuthenticated], url_path="versions/latest")
     def latest_version(self, request, pk=None):
         asset = self.get_object()
@@ -270,7 +301,6 @@ class AssetViewSet(viewsets.ModelViewSet):
         ser = AssetVersionSerializer(ver, context={"request": request})
         return Response(ser.data)
 
-    # 回滚：/api/assets/:id/versions/<ver>/restore/
     @action(
         detail=True,
         methods=["post"],
@@ -307,7 +337,6 @@ class AssetViewSet(viewsets.ModelViewSet):
         ser = AssetVersionSerializer(new_v, context={"request": request})
         return Response(ser.data, status=201)
 
-    # 兼容旧回滚：/api/assets/:id/restore_version/?version=#
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated], url_path="restore_version")
     def restore_version_query(self, request, pk=None):
         if self._role(request.user) not in ("admin", "editor"):
@@ -316,6 +345,31 @@ class AssetViewSet(viewsets.ModelViewSet):
         if not ver:
             return Response({"detail": "Missing version"}, status=400)
         return self.restore_version_nested(request, pk, ver)
+
+    # ---------------- 预览计数（后端去抖） ----------------
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated], url_path="track_view")
+    def track_view(self, request, pk=None):
+        """
+        进入 Preview 页时调用：
+        - 使用 cache 做去抖：同一“用户或IP + 资产”在 TTL 内只 +1
+        - 避免 PDF/Video 内部请求造成误增
+        """
+        asset = self.get_object()
+        user = getattr(request, "user", None)
+        uid = getattr(user, "id", None)
+        ip = _client_ip(request)
+
+        # ★ TTL：5分钟（可按需调整：60=1分钟，0=每次都加）
+        ttl_seconds = 300
+        cache_key = f"viewed:{asset.pk}:{uid or 'anon'}:{ip}"
+
+        if cache.get(cache_key):
+            return Response({"ok": True, "view_count": asset.view_count}, status=status.HTTP_200_OK)
+
+        Asset.objects.filter(pk=asset.pk).update(view_count=F("view_count") + 1)
+        cache.set(cache_key, 1, ttl_seconds)
+        asset.refresh_from_db(fields=["view_count"])
+        return Response({"ok": True, "view_count": asset.view_count}, status=status.HTTP_200_OK)
 
 
 class TagViewSet(viewsets.ModelViewSet):

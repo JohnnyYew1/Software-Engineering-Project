@@ -1,3 +1,4 @@
+/* FULL FILE: src/app/dashboard/upload/page.tsx */
 'use client';
 
 import {
@@ -24,19 +25,11 @@ export default function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // 原有元数据
-  const [assetData, setAssetData] = useState({
-    name: '',
-    description: '',
-    brand: '',
-    assetNo: '',
-  });
+  const [assetData, setAssetData] = useState({ name: '', description: '', brand: '', assetNo: '' });
 
-  // 标签：从后端加载 + 已选择
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
 
-  // 下拉面板开关 & 暂存勾选（点击 Done 才生效）
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [stagedTagIds, setStagedTagIds] = useState<number[]>([]);
 
@@ -44,7 +37,6 @@ export default function UploadPage() {
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
 
-  // 权限检查（无权则 3 秒后跳回 assets 列表）
   useEffect(() => {
     if (!permissions.canUpload()) {
       setMessage({
@@ -58,7 +50,6 @@ export default function UploadPage() {
     }
   }, [router]);
 
-  // 自动清除提示
   useEffect(() => {
     if (message) {
       const timer = setTimeout(() => setMessage(null), 5000);
@@ -66,44 +57,34 @@ export default function UploadPage() {
     }
   }, [message]);
 
-  // 载入标签（统一来自后端 Tag 表）
   useEffect(() => {
-    async function fetchTags() {
+    (async () => {
       try {
         const tags = await listTags();
         setAllTags(tags || []);
-      } catch {
-        // 静默失败
-      }
-    }
-    fetchTags();
+      } catch {}
+    })();
   }, []);
 
-  // 点击外部关闭下拉
   useEffect(() => {
     if (!tagDropdownOpen) return;
     const onClick = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setTagDropdownOpen(false);
-        setStagedTagIds(selectedTagIds); // 还原
+        setStagedTagIds(selectedTagIds);
       }
     };
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, [tagDropdownOpen, selectedTagIds]);
 
-  // 打开时，用当前已选初始化暂存
   const openTagDropdown = () => {
     setStagedTagIds(selectedTagIds);
     setTagDropdownOpen(true);
   };
-
   const toggleStage = (id: number) => {
-    setStagedTagIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setStagedTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
-
   const applyTags = () => {
     setSelectedTagIds(stagedTagIds);
     setTagDropdownOpen(false);
@@ -128,7 +109,6 @@ export default function UploadPage() {
   };
 
   const handleFileSelect = (file: File) => {
-    // 支持：JPG/PNG、GLB、MP4、PDF
     const validExtensions = ['jpg', 'jpeg', 'png', 'glb', 'mp4', 'pdf'];
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
     if (fileExtension && validExtensions.includes(fileExtension)) {
@@ -140,7 +120,8 @@ export default function UploadPage() {
       setSelectedFile(null);
       setMessage({
         type: 'error',
-        text: 'Please upload supported file types: JPG, PNG (images), GLB (3D), MP4 (videos), or PDF (documents)',
+        text:
+          'Please upload supported file types: JPG, PNG (images), GLB (3D), MP4 (videos), or PDF (documents)',
       });
     }
   };
@@ -152,11 +133,9 @@ export default function UploadPage() {
 
   const handleInputChange =
     (field: keyof typeof assetData) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setAssetData((prev) => ({ ...prev, [field]: e.target.value }));
-    };
 
-  // 真正上传
   const handleUpload = async () => {
     if (!selectedFile) {
       setMessage({ type: 'error', text: 'Please select a file to upload' });
@@ -173,7 +152,6 @@ export default function UploadPage() {
       fd.append('name', assetData.name);
       fd.append('file', selectedFile);
 
-      // 资产类型判断（含 glb → 3d_model、pdf）
       const ext = selectedFile.name.split('.').pop()?.toLowerCase() || '';
       const assetType =
         ['jpg', 'jpeg', 'png'].includes(ext)
@@ -191,22 +169,15 @@ export default function UploadPage() {
       if (assetData.brand) fd.append('brand', assetData.brand);
       if (assetData.assetNo) fd.append('asset_no', assetData.assetNo);
 
-      // 关键：把多选 tag 的 id 列表逐项 append
       selectedTagIds.forEach((id) => fd.append('tag_ids', String(id)));
 
-      await apiRequest('/api/assets/', {
-        method: 'POST',
-        body: fd,
-        isFormData: true,
-      });
+      await apiRequest('/api/assets/', { method: 'POST', body: fd, isFormData: true });
 
-      // 成功重置
       setSelectedFile(null);
       setAssetData({ name: '', description: '', brand: '', assetNo: '' });
       setSelectedTagIds([]);
       setStagedTagIds([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
-
       setMessage({ type: 'success', text: 'Asset uploaded successfully' });
     } catch (err: any) {
       setMessage({ type: 'error', text: err?.message || 'Upload failed. Please try again.' });
@@ -233,25 +204,23 @@ export default function UploadPage() {
     return 'File';
   };
 
-  // 无权限时的提示
   if (!permissions.canUpload()) {
     return (
       <VStack align="stretch" gap={6}>
-        <Heading>Upload Asset</Heading>
+        <Heading color="white">Upload Asset</Heading>
         <Box
-          bg="red.50"
-          color="red.800"
+          bg="rgba(255,255,255,0.70)"
+          color="gray.900"
           p={4}
           borderRadius="md"
-          borderWidth="1px"
-          borderColor="red.200"
-          textAlign="center"
+          border="1px solid rgba(255,255,255,0.35)"
+          boxShadow="0 10px 30px rgba(0,0,0,0.18)"
+          style={{ backdropFilter: 'blur(8px)' }}
         >
-          <Text fontWeight="bold" mb={2}>Access Denied</Text>
-          <Text>
-            You do not have permission to upload assets. Only Editor role can upload assets.
-            Redirecting to assets page...
+          <Text fontWeight="bold" mb={2}>
+            Access Denied
           </Text>
+          <Text>Only Editor role can upload assets. Redirecting…</Text>
         </Box>
       </VStack>
     );
@@ -259,67 +228,111 @@ export default function UploadPage() {
 
   return (
     <VStack align="stretch" gap={6}>
-      <Heading>Upload Asset</Heading>
+      <Heading color="white">Upload Asset</Heading>
 
       {message && (
         <Box
-          bg={message.type === 'error' ? 'red.50' : 'green.50'}
+          bg="rgba(255,255,255,0.70)"
           color={message.type === 'error' ? 'red.800' : 'green.800'}
           p={3}
           borderRadius="md"
           borderWidth="1px"
-          borderColor={message.type === 'error' ? 'red.200' : 'green.200'}
+          borderColor={message.type === 'error' ? 'rgba(252,165,165,0.90)' : 'rgba(187,247,208,0.90)'}
+          boxShadow="0 10px 30px rgba(0,0,0,0.18)"
+          style={{ backdropFilter: 'blur(8px)' }}
         >
           {message.text}
         </Box>
       )}
 
-      {/* 拖拽/点击选择文件 */}
+      {/* DnD 卡片：半透明 70% */}
       <Box
-        border="2px dashed"
-        borderColor={dragOver ? 'blue.400' : 'gray.300'}
-        borderRadius="lg"
+        bg="rgba(255,255,255,0.70)"
+        border="1px solid rgba(226,232,240,0.90)"
+        borderRadius="20px"
+        boxShadow="0 20px 60px rgba(0,0,0,0.20)"
         p={8}
-        textAlign="center"
-        bg={dragOver ? 'blue.50' : 'gray.50'}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        cursor="pointer"
-        transition="all 0.2s"
-        onClick={() => fileInputRef.current?.click()}
+        style={{ backdropFilter: 'blur(8px)' }}
       >
-        <VStack gap={4}>
-          <Text fontSize="xl" fontWeight="bold">
-            {selectedFile ? 'File Selected' : 'Drag & Drop Files Here'}
-          </Text>
-          <Text color="gray.600">
-            {selectedFile ? selectedFile.name : 'or click to select files from your computer'}
-          </Text>
-          <Text fontSize="sm" color="gray.500">
-            Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos), PDF (Documents)
-          </Text>
-          {!selectedFile && <Button colorScheme="blue">Select Files</Button>}
-        </VStack>
-
-        <Input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileInput}
-          accept=".jpg,.jpeg,.png,.glb,.mp4,.pdf"
-          display="none"
-        />
+        <Box
+          border="2px dashed"
+          borderColor={dragOver ? 'blue.300' : 'rgba(203,213,225,0.9)'}
+          borderRadius="16px"
+          p={8}
+          textAlign="center"
+          bg={dragOver ? 'rgba(59,130,246,0.08)' : 'rgba(255,255,255,0.85)'}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          cursor="pointer"
+          transition="all 0.2s"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <VStack gap={4}>
+            <Text fontSize="xl" fontWeight="bold" color="gray.900">
+              {selectedFile ? 'File Selected' : 'Drag & Drop Files Here'}
+            </Text>
+            <Text color="gray.700">
+              {selectedFile ? selectedFile.name : 'or click to select files from your computer'}
+            </Text>
+            <Text fontSize="sm" color="gray.600">
+              Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos), PDF (Documents)
+            </Text>
+            {!selectedFile && (
+              <Button
+                borderRadius="md"
+                position="relative"
+                _before={{
+                  content: '""',
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: 'inherit',
+                  padding: '1px',
+                  background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+                  WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                  WebkitMaskComposite: 'xor',
+                  maskComposite: 'exclude',
+                  pointerEvents: 'none',
+                }}
+                color="white"
+                bg="linear-gradient(90deg,#3b82f6,#8b5cf6)"
+              >
+                Select Files
+              </Button>
+            )}
+          </VStack>
+          <Input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileInput}
+            accept=".jpg,.jpeg,.png,.glb,.mp4,.pdf"
+            display="none"
+          />
+        </Box>
       </Box>
 
-      {/* 文件信息 + 表单 */}
+      {/* 文件信息 + 表单 卡片：半透明 60% */}
       {selectedFile && (
-        <VStack align="stretch" gap={4} p={6} borderWidth="1px" borderRadius="lg" bg="white">
-          <Heading size="md">File Information</Heading>
+        <VStack
+          align="stretch"
+          gap={4}
+          bg="rgba(255,255,255,0.60)"
+          border="1px solid rgba(226,232,240,0.90)"
+          borderRadius="20px"
+          boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+          p={6}
+          style={{ backdropFilter: 'blur(8px)' }}
+        >
+          <Heading size="md" color="gray.900">
+            File Information
+          </Heading>
 
           <Box>
-            <Text fontWeight="medium" mb={2}>Selected File:</Text>
-            <Text color="gray.600">{selectedFile.name}</Text>
-            <Text fontSize="sm" color="gray.500">
+            <Text fontWeight="medium" mb={1} color="gray.900">
+              Selected File:
+            </Text>
+            <Text color="gray.800">{selectedFile.name}</Text>
+            <Text fontSize="sm" color="gray.600">
               Type: {getFileTypeDisplay(selectedFile.name)} | Size:{' '}
               {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
             </Text>
@@ -327,57 +340,48 @@ export default function UploadPage() {
 
           <VStack align="stretch" gap={3}>
             <Box>
-              <Text fontWeight="medium" mb={2}>Asset Name *</Text>
-              <Input
-                placeholder="Enter asset name"
-                value={assetData.name}
-                onChange={handleInputChange('name')}
-              />
+              <Text fontWeight="medium" mb={2} color="gray.900">
+                Asset Name *
+              </Text>
+              <Input placeholder="Enter asset name" value={assetData.name} onChange={handleInputChange('name')} bg="white" />
             </Box>
 
             <HStack gap={4}>
               <Box flex={1}>
-                <Text fontWeight="medium" mb={2}>Asset Number</Text>
-                <Input
-                  placeholder="Enter asset number"
-                  value={assetData.assetNo}
-                  onChange={handleInputChange('assetNo')}
-                />
+                <Text fontWeight="medium" mb={2} color="gray.900">
+                  Asset Number
+                </Text>
+                <Input placeholder="Enter asset number" value={assetData.assetNo} onChange={handleInputChange('assetNo')} bg="white" />
               </Box>
               <Box flex={1}>
-                <Text fontWeight="medium" mb={2}>Brand</Text>
-                <Input
-                  placeholder="Enter brand"
-                  value={assetData.brand}
-                  onChange={handleInputChange('brand')}
-                />
+                <Text fontWeight="medium" mb={2} color="gray.900">
+                  Brand
+                </Text>
+                <Input placeholder="Enter brand" value={assetData.brand} onChange={handleInputChange('brand')} bg="white" />
               </Box>
             </HStack>
 
             <Box>
-              <Text fontWeight="medium" mb={2}>Description</Text>
-              <Textarea
-                placeholder="Describe this asset..."
-                rows={4}
-                value={assetData.description}
-                onChange={handleInputChange('description')}
-              />
+              <Text fontWeight="medium" mb={2} color="gray.900">
+                Description
+              </Text>
+              <Textarea placeholder="Describe this asset..." rows={4} value={assetData.description} onChange={handleInputChange('description')} bg="white" />
             </Box>
 
-            {/* ✅ 标签多选（下拉 → 勾选 → Done 应用） */}
+            {/* 标签多选（弹出层） */}
             <Box position="relative" ref={dropdownRef as any}>
-              <Text fontWeight="medium" mb={2}>Tags</Text>
-
+              <Text fontWeight="medium" mb={2} color="gray.900">
+                Tags
+              </Text>
               <Button
                 variant="outline"
-                onClick={openTagDropdown}
+                onClick={() => openTagDropdown()}
                 style={{ justifyContent: 'space-between', width: '100%' }}
+                borderColor="rgba(226,232,240,0.90)"
+                bg="rgba(255,255,255,0.85)"
               >
                 <HStack justify="space-between" width="100%">
-                  <span
-                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={selectedTagNames}
-                  >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={selectedTagNames}>
                     {selectedTagNames}
                   </span>
                   <span style={{ fontSize: 12, lineHeight: 1 }}>▾</span>
@@ -388,25 +392,21 @@ export default function UploadPage() {
                 <Box
                   position="absolute"
                   zIndex={20}
-                  bg="white"
-                  border="1px solid #E2E8F0"
-                  borderRadius="8px"
+                  bg="rgba(255,255,255,0.70)"
+                  border="1px solid rgba(226,232,240,0.90)"
+                  borderRadius="16px"
                   mt={2}
                   w="100%"
-                  boxShadow="md"
+                  boxShadow="0 20px 60px rgba(0,0,0,0.20)"
                   p={2}
+                  style={{ backdropFilter: 'blur(10px)' }}
                 >
-                  <Box
-                    maxHeight="220px"
-                    overflowY="auto"
-                    style={{ padding: '6px 4px' }}
-                  >
+                  <Box maxHeight="220px" overflowY="auto" style={{ padding: '6px 4px' }}>
                     {allTags.length === 0 && (
-                      <Text fontSize="sm" color="gray.500" p={2}>
+                      <Text fontSize="sm" color="gray.600" p={2}>
                         No tags available. (Managed by Admin)
                       </Text>
                     )}
-
                     {allTags.map((t) => {
                       const checked = stagedTagIds.includes(t.id);
                       return (
@@ -417,24 +417,27 @@ export default function UploadPage() {
                             alignItems: 'center',
                             gap: 8,
                             padding: '8px 6px',
-                            borderRadius: 6,
+                            borderRadius: 8,
+                            background: checked ? '#F7FAFC' : 'transparent',
                             cursor: 'pointer',
                           }}
-                          onMouseDown={(e) => e.preventDefault()} // 避免点选导致 Button 失焦关闭
+                          onMouseDown={(e) => e.preventDefault()}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleStage(t.id)}
-                          />
+                          <input type="checkbox" checked={checked} onChange={() => toggleStage(t.id)} />
                           <span style={{ fontSize: 14 }}>{t.name}</span>
                         </label>
                       );
                     })}
                   </Box>
-
                   <HStack justify="flex-end" gap={2} p={2}>
-                    <Button size="sm" variant="outline" onClick={() => { setTagDropdownOpen(false); setStagedTagIds(selectedTagIds); }}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setTagDropdownOpen(false);
+                        setStagedTagIds(selectedTagIds);
+                      }}
+                    >
                       Cancel
                     </Button>
                     <Button size="sm" colorScheme="blue" onClick={applyTags}>
@@ -445,22 +448,39 @@ export default function UploadPage() {
               )}
 
               {selectedTagIds.length > 0 && (
-                <Text mt={2} fontSize="sm" color="gray.600">
+                <Text mt={2} fontSize="sm" color="gray.700">
                   Selected: {selectedTagNames}
                 </Text>
               )}
               {selectedTagIds.length === 0 && (
-                <Text mt={2} fontSize="sm" color="gray.500">
-                  * Tags are managed by Admin in Django Admin. Editors can only select existing tags.
+                <Text mt={2} fontSize="sm" color="gray.600">
+                  * Tags are managed by Admin. Editors can only select existing tags.
                 </Text>
               )}
             </Box>
 
             <HStack gap={4} mt={4}>
               <Button
-                colorScheme="blue"
                 onClick={handleUpload}
                 disabled={uploading}
+                borderRadius="md"
+                position="relative"
+                _before={{
+                  content: '""',
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: 'inherit',
+                  padding: '1px',
+                  background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+                  WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                  WebkitMaskComposite: 'xor',
+                  maskComposite: 'exclude',
+                  pointerEvents: 'none',
+                }}
+                color="white"
+                bg="linear-gradient(90deg,#3b82f6,#8b5cf6)"
+                _hover={{ transform: 'translateY(-1px)' }}
+                transition="all .15s ease"
               >
                 {uploading ? 'Uploading…' : 'Upload Asset'}
               </Button>

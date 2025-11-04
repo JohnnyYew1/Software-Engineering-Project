@@ -1,5 +1,5 @@
 // src/services/assets.ts
-// 统一导出 & 兼容旧字段/旧函数名；移除对 `api` 的依赖，改用 apiRequest/BASE_URL
+// 统一导出 & 兼容旧字段/旧函数名；保留 apiRequest/BASE_URL 的使用
 
 import { apiRequest, BASE_URL } from "@/lib/api";
 
@@ -13,6 +13,7 @@ export type Tag = {
 export type MiniUser = {
   id: number;
   username: string;
+  role?: string;
 };
 
 export type AssetItem = {
@@ -31,16 +32,12 @@ export type AssetItem = {
   file?: string;
   file_url?: string;
 
-  // 某些页面用到
   mime_type?: string;
 
   tags: Tag[];
 
-  // 后端真实字段（日期）
-  upload_date?: string;
-
-  // 兼容旧页面字段
-  created_at?: string;
+  upload_date?: string; // 后端真实字段
+  created_at?: string;  // 兼容旧字段
   updated_at?: string;
 
   download_count?: number;
@@ -59,22 +56,22 @@ export type AssetVersion = {
   created_at: string;
   uploaded_by?: MiniUser;
   note?: string;
-  // 兼容旧页面：如果旧代码用 uploaded_at，这里额外提供（由 created_at 映射）
-  uploaded_at?: string;
+  uploaded_at?: string; // 兼容旧代码
 };
 
 export type GetAssetsParams = {
-  // 新旧都兼容：有的页面传 search，有的传 q
   q?: string;
   search?: string;
 
   date_from?: string;
   date_to?: string;
-  tags?: number[] | string | string[]; // 兼容旧页面传 string / string[]
-  tag_names?: string; // csv: "logo,product"
+  tags?: number[] | string | string[];
+  /** 'OR' -> ?tags=1,2,3 ; 'AND' -> ?tags=1&tags=2&tags=3 */
+  tags_mode?: "OR" | "AND";
+
+  tag_names?: string;
   asset_type?: string;
   uploaded_by?: number;
-  // 放宽类型：兼容 "-created_at" 等旧值，避免 TS 报错
   ordering?: string;
   page?: number;
   page_size?: number;
@@ -82,7 +79,6 @@ export type GetAssetsParams = {
 
 // -------------------- Helpers --------------------
 
-// 从 localStorage 取 JWT，给 fetch 用（apiRequest 已内置，这里只给二进制/表单用）
 function getAccessToken(): string | null {
   try {
     return localStorage.getItem("accessToken");
@@ -98,11 +94,15 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
     : { ...(extra || {}) };
 }
 
+/**
+ * 构造查询字符串：
+ * - 默认 tags_mode = 'OR' -> ?tags=1,2,3  （兼容性更好）
+ * - tags_mode = 'AND'    -> ?tags=1&tags=2&tags=3
+ */
 function buildQuery(params?: GetAssetsParams): string {
   if (!params) return "";
   const q = new URLSearchParams();
 
-  // SearchFilter 默认读取 ?search=
   const keyword = params.q ?? params.search;
   if (keyword) q.set("search", keyword);
 
@@ -115,11 +115,26 @@ function buildQuery(params?: GetAssetsParams): string {
   if (params.page) q.set("page", String(params.page));
   if (params.page_size) q.set("page_size", String(params.page_size));
 
-  // tags 多选 => ?tags=1&tags=2
+  // --- tags --- //
   const t = params.tags;
+  const mode: "OR" | "AND" = (params.tags_mode as any) === "AND" ? "AND" : "OR";
+
   if (t != null) {
     const arr = Array.isArray(t) ? t : [t];
-    arr.forEach((v) => q.append("tags", String(v)));
+    const ids = arr
+      .flatMap((v) => String(v).split(","))
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    if (ids.length) {
+      if (mode === "AND") {
+        // ?tags=1&tags=2&tags=3
+        ids.forEach((v) => q.append("tags", v));
+      } else {
+        // 默认 OR：?tags=1,2,3
+        q.set("tags", ids.join(","));
+      }
+    }
   }
 
   const s = q.toString();
@@ -128,16 +143,13 @@ function buildQuery(params?: GetAssetsParams): string {
 
 // -------------------- Assets API --------------------
 
-// 列表
 export async function getAssets(params?: GetAssetsParams): Promise<AssetItem[]> {
   const url = `/api/assets/${buildQuery(params)}`;
   const data = await apiRequest<any>(url);
-  // 兼容分页/非分页
   const arr = Array.isArray(data) ? data : (data?.results ?? []);
   return arr as AssetItem[];
 }
 
-// “我的上传”
 export async function getMyAssets(
   userId: number,
   params?: Omit<GetAssetsParams, "uploaded_by">
@@ -146,7 +158,6 @@ export async function getMyAssets(
   return getAssets(merged);
 }
 
-// 详情
 export async function getAssetById(id: number | string): Promise<AssetItem> {
   const data = await apiRequest<AssetItem>(`/api/assets/${id}/`);
   return data;
@@ -156,7 +167,7 @@ export async function getAssetById(id: number | string): Promise<AssetItem> {
 export async function createAsset(form: FormData): Promise<AssetItem> {
   const res = await fetch(`${BASE_URL}/api/assets/`, {
     method: "POST",
-    headers: authHeaders(), // Content-Type 交给浏览器自动带 multipart 边界
+    headers: authHeaders(), // multipart 让浏览器自己带边界
     body: form,
   });
   if (!res.ok) {
@@ -166,7 +177,7 @@ export async function createAsset(form: FormData): Promise<AssetItem> {
   return (await res.json()) as AssetItem;
 }
 
-// 更新（PATCH，JSON 或 multipart）
+// 更新（PATCH）
 export async function updateAsset(
   id: number | string,
   data: FormData | Record<string, unknown>
@@ -196,13 +207,19 @@ export async function deleteAsset(id: number | string): Promise<void> {
   }
 }
 
-// 预览（返回 {file_url}）
+// ★ 预览直链（用于 img/video/object 的 src）——优先 /preview/，失败回退 detail
 export async function getPreviewUrl(id: number | string): Promise<string> {
-  const data = await apiRequest<{ file_url: string }>(`/api/assets/${id}/preview/`);
-  return data?.file_url;
+  try {
+    const data = await apiRequest<{ file_url: string }>(`/api/assets/${id}/preview/`);
+    if (data?.file_url) return data.file_url;
+  } catch {
+    // fallthrough
+  }
+  const detail = await apiRequest<AssetItem>(`/api/assets/${id}/`);
+  return detail?.file_url || detail?.file || "";
 }
 
-// 下载（真实下载接口，二进制，保留旧函数以兼容）
+// ★ 仅当用户点击“下载”时调用（这里才会 +1）
 export async function downloadAsset(id: number | string): Promise<Blob> {
   const res = await fetch(`${BASE_URL}/api/assets/${id}/download/`, {
     method: "GET",
@@ -212,7 +229,7 @@ export async function downloadAsset(id: number | string): Promise<Blob> {
   return await res.blob();
 }
 
-// ✅ 更稳的下载：同时解析响应头拿“真实文件名”
+// 更稳的下载：解析响应头拿“真实文件名”
 export async function downloadAssetBlob(
   id: number | string
 ): Promise<{ blob: Blob; filename: string }> {
@@ -221,14 +238,11 @@ export async function downloadAssetBlob(
     headers: authHeaders(),
   });
 
-  // 预先拿 blob（即使失败也能读取文本）
   const blob = await res.blob();
 
   if (!res.ok) {
     let t = "";
-    try {
-      t = await blob.text();
-    } catch {}
+    try { t = await blob.text(); } catch {}
     throw new Error(`Download failed (${res.status}) ${t}`);
   }
 
@@ -238,13 +252,26 @@ export async function downloadAssetBlob(
     /filename\*=UTF-8''([^;]+)/i.exec(cd) ||
     /filename="?([^"]+)"?/i.exec(cd);
   if (m && m[1]) {
-    try {
-      filename = decodeURIComponent(m[1]);
-    } catch {
-      filename = m[1];
-    }
+    try { filename = decodeURIComponent(m[1]); }
+    catch { filename = m[1]; }
   }
   return { blob, filename };
+}
+
+// -------------------- View Count --------------------
+
+/**
+ * 进入预览页后调用：
+ * - 前端不再做 sessionStorage 防抖
+ * - 由后端（按 user/IP + TTL）决定是否 +1
+ */
+export async function trackView(id: number | string): Promise<void> {
+  await apiRequest(`/api/assets/${id}/track_view/`, { method: "POST" }).catch(() => {});
+}
+
+/** 兼容旧名：内部直接转调 trackView */
+export async function trackViewOnce(id: number | string): Promise<void> {
+  return trackView(id);
 }
 
 // -------------------- Tags API --------------------
@@ -255,12 +282,10 @@ export async function getTags(): Promise<Tag[]> {
   return arr as Tag[];
 }
 
-// 兼容：有些页面 import { listTags }
 export const listTags = getTags;
 
 // -------------------- Versions API --------------------
 
-// 统一把后端的 created_at 映射成 uploaded_at（兼容旧代码）
 function mapVersion(v: any): AssetVersion {
   const created = v?.created_at ?? v?.uploaded_at ?? "";
   return {
@@ -281,7 +306,6 @@ export async function getAssetVersions(assetId: number | string): Promise<AssetV
 }
 
 export async function getLatestVersion(assetId: number | string): Promise<AssetVersion | null> {
-  // 后端未提供 /latest/ 时，前端自行从列表里取最大 version
   try {
     const list = await getAssetVersions(assetId);
     if (!list.length) return null;
@@ -301,21 +325,18 @@ export async function uploadNewVersion(
     fd = fileOrForm;
   } else {
     fd = new FormData();
-    fd.append("file", fileOrForm as File); // ✅ 关键是 'file'
+    fd.append("file", fileOrForm as File); // 关键是 'file'
     if (note) fd.append("note", note);
   }
 
-  // 先尝试新路由 /versions/
   let res = await fetch(`${BASE_URL}/api/assets/${assetId}/versions/`, {
     method: "POST",
-    headers: authHeaders(), // 不手动设 Content-Type
+    headers: authHeaders(),
     body: fd,
   });
 
-  // 如果失败，打印后端信息并尝试兼容旧路由 /upload_version/
   if (!res.ok) {
     const bodyTxt = await res.text().catch(() => "");
-    // fallback
     const res2 = await fetch(`${BASE_URL}/api/assets/${assetId}/upload_version/`, {
       method: "POST",
       headers: authHeaders(),
@@ -339,7 +360,6 @@ export async function restoreVersion(
   assetId: number | string,
   version: number
 ): Promise<AssetVersion> {
-  // ✅ 使用后端实际提供的路由：/restore_version/?version=#
   const url = `${BASE_URL}/api/assets/${assetId}/restore_version/?version=${encodeURIComponent(
     String(version)
   )}`;

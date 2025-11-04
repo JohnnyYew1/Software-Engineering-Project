@@ -1,18 +1,18 @@
 'use client';
 
-import { 
-  Heading, 
-  Text, 
-  SimpleGrid, 
-  Button, 
-  VStack, 
-  Box, 
-  HStack
+import { useState, useEffect, useMemo } from 'react';
+import {
+  Box,
+  VStack,
+  HStack,
+  Text,
+  Heading,
+  SimpleGrid,
+  Button,
 } from '@chakra-ui/react';
-import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { permissions } from '@/utils/permissions';
 import { useAuth } from '@/contexts/AuthContext';
+import GlassCard from '@/components/GlassCard';
 
 type Stats = {
   totalAssets: number;
@@ -21,12 +21,45 @@ type Stats = {
   totalUsers?: number;
 };
 
+// 统一霓虹按钮（Chakra v3 兼容）
+function NeonButton(props: React.ComponentProps<typeof Button>) {
+  return (
+    <Button
+      {...props}
+      color="white"
+      borderRadius="md"
+      bg="rgba(59,130,246,0.20)"
+      _hover={{
+        bg: 'rgba(59,130,246,0.28)',
+        transform: 'translateY(-1px)',
+        boxShadow: '0 12px 28px rgba(59,130,246,0.25)',
+      }}
+      _active={{ bg: 'rgba(59,130,246,0.35)' }}
+      position="relative"
+      _before={{
+        content: '""',
+        position: 'absolute',
+        inset: 0,
+        borderRadius: 'inherit',
+        padding: '1px',
+        background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+        WebkitMask:
+          'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+        WebkitMaskComposite: 'xor',
+        maskComposite: 'exclude',
+        pointerEvents: 'none',
+      }}
+      transition="all .15s ease"
+    />
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
-  const { user, loading } = useAuth();  // ✅ 正确来源
+  const { user, loading } = useAuth();
+
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // 兜底：如果 context 里还没取到，就从 localStorage 拿（你自己的 authService 可在登录后写入 localStorage）
   useEffect(() => {
     if (user) {
       setCurrentUser(user);
@@ -34,10 +67,10 @@ export default function Dashboard() {
     }
     if (typeof window !== 'undefined') {
       try {
-        const raw = window.localStorage.getItem('currentUser') || window.localStorage.getItem('user');
-        if (raw) {
-          setCurrentUser(JSON.parse(raw));
-        }
+        const raw =
+          window.localStorage.getItem('currentUser') ||
+          window.localStorage.getItem('user');
+        if (raw) setCurrentUser(JSON.parse(raw));
       } catch {}
     }
   }, [user]);
@@ -54,24 +87,24 @@ export default function Dashboard() {
     return baseStats;
   };
 
-  const getWelcomeMessage = () => {
+  const welcomeTitle = useMemo(() => {
     switch (currentUser?.role) {
       case 'admin':
-        return 'System Overview - Manage users and monitor system activity';
+        return 'System Overview — Manage users and monitor system activity';
       case 'editor':
-        return 'Content Management - Upload and manage your digital assets';
+        return 'Content Management — Upload and manage your digital assets';
       case 'viewer':
-        return 'Asset Library - Browse and download available assets';
+        return 'Asset Library — Browse and download available assets';
       default:
         return 'Overview of your digital assets';
     }
-  };
+  }, [currentUser?.role]);
 
   if (loading && !currentUser) {
     return (
       <VStack align="stretch" gap={6}>
-        <Heading>Dashboard</Heading>
-        <Text>Loading...</Text>
+        <Heading color="white">Dashboard</Heading>
+        <Text color="gray.300">Loading...</Text>
       </VStack>
     );
   }
@@ -79,8 +112,8 @@ export default function Dashboard() {
   if (!currentUser) {
     return (
       <VStack align="stretch" gap={6}>
-        <Heading>Dashboard</Heading>
-        <Text>Please login to continue.</Text>
+        <Heading color="white">Dashboard</Heading>
+        <Text color="gray.300">Please login to continue.</Text>
       </VStack>
     );
   }
@@ -89,21 +122,24 @@ export default function Dashboard() {
 
   return (
     <VStack align="stretch" gap={6}>
+      {/* 顶部标题（白字，匹配深色背景） */}
       <Box>
-        <Heading>Dashboard</Heading>
-        <Text fontSize="xl" color="gray.600">{getWelcomeMessage()}</Text>
-        <Text fontSize="sm" color="gray.500" mt={1}>
-          Welcome back, {currentUser?.first_name || currentUser?.username}!{' '}
-          You are logged in as{' '}
+        <Heading color="white">Dashboard</Heading>
+        <Text fontSize="xl" color="blue.300" fontWeight="bold">
+          {welcomeTitle}
+        </Text>
+        <Text fontSize="sm" color="gray.300" mt={1}>
+          Welcome back, {currentUser?.first_name || currentUser?.username}! You
+          are logged in as{' '}
           <Text
             as="span"
             fontWeight="bold"
             color={
               currentUser?.role === 'admin'
-                ? 'red.500'
+                ? 'red.300'
                 : currentUser?.role === 'editor'
-                ? 'blue.500'
-                : 'green.500'
+                ? 'blue.300'
+                : 'green.300'
             }
           >
             {currentUser?.role?.toUpperCase()}
@@ -111,114 +147,207 @@ export default function Dashboard() {
         </Text>
       </Box>
 
-      {/* 统计卡片 */}
-      <SimpleGrid columns={{ base: 1, md: currentUser?.role === 'admin' ? 4 : 3 }} gap={6}>
-        <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-          <Text fontSize="sm" color="gray.600">Total Assets</Text>
-          <Text fontSize="3xl" fontWeight="bold">{stats.totalAssets}</Text>
-          <Text fontSize="xs" color="gray.500">Photos, 3D Models & Videos</Text>
-        </Box>
+      {/* 统计卡片：70% 透明玻璃卡 */}
+      <SimpleGrid
+        columns={{ base: 1, md: currentUser?.role === 'admin' ? 4 : 3 }}
+        gap={6}
+      >
+        <GlassCard p={6}>
+          <Text fontSize="sm" color="gray.600">
+            Total Assets
+          </Text>
+          <Text fontSize="3xl" fontWeight="bold">
+            {stats.totalAssets}
+          </Text>
+          <Text fontSize="xs" color="gray.600">
+            Photos, 3D Models & Videos
+          </Text>
+        </GlassCard>
 
-        <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-          <Text fontSize="sm" color="gray.600">Total Downloads</Text>
-          <Text fontSize="3xl" fontWeight="bold">{stats.totalDownloads}</Text>
-          <Text fontSize="xs" color="gray.500">All time downloads</Text>
-        </Box>
+        <GlassCard p={6}>
+          <Text fontSize="sm" color="gray.600">
+            Total Downloads
+          </Text>
+          <Text fontSize="3xl" fontWeight="bold">
+            {stats.totalDownloads}
+          </Text>
+          <Text fontSize="xs" color="gray.600">
+            All time downloads
+          </Text>
+        </GlassCard>
 
-        <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-          <Text fontSize="sm" color="gray.600">Recent Activity</Text>
-          <Text fontSize="3xl" fontWeight="bold">{stats.recentActivity}</Text>
-          <Text fontSize="xs" color="gray.500">Last 30 days</Text>
-        </Box>
+        <GlassCard p={6}>
+          <Text fontSize="sm" color="gray.600">
+            Recent Activity
+          </Text>
+          <Text fontSize="3xl" fontWeight="bold">
+            {stats.recentActivity}
+          </Text>
+          <Text fontSize="xs" color="gray.600">
+            Last 30 days
+          </Text>
+        </GlassCard>
 
         {currentUser?.role === 'admin' && stats.totalUsers !== undefined && (
-          <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-            <Text fontSize="sm" color="gray.600">Total Users</Text>
-            <Text fontSize="3xl" fontWeight="bold">{stats.totalUsers}</Text>
-            <Text fontSize="xs" color="gray.500">System users</Text>
-          </Box>
+          <GlassCard p={6}>
+            <Text fontSize="sm" color="gray.600">
+              Total Users
+            </Text>
+            <Text fontSize="3xl" fontWeight="bold">
+              {stats.totalUsers}
+            </Text>
+            <Text fontSize="xs" color="gray.600">
+              System users
+            </Text>
+          </GlassCard>
         )}
       </SimpleGrid>
 
-      {/* 快捷操作区域 */}
-      <SimpleGrid columns={{ base: 1, md: currentUser?.role === 'admin' ? 3 : 2 }} gap={6}>
-        <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-          <Heading size="md" mb={4}>Browse Assets</Heading>
-          <Text color="gray.600" mb={4}>Explore all available digital assets in the system</Text>
-          <Button variant="outline" onClick={() => router.push('/dashboard/assets')} width="full">
+      {/* 快捷操作：透明卡 + 霓虹按钮 */}
+      <SimpleGrid
+        columns={{ base: 1, md: currentUser?.role === 'admin' ? 3 : 2 }}
+        gap={6}
+      >
+        <GlassCard p={6}>
+          <Heading size="md" mb={3}>
+            Browse Assets
+          </Heading>
+          <Text color="gray.600" mb={4}>
+            Explore all available digital assets in the system
+          </Text>
+          <NeonButton w="100%" onClick={() => router.push('/dashboard/assets')}>
             View All Assets
-          </Button>
-        </Box>
+          </NeonButton>
+        </GlassCard>
 
         {currentUser?.role === 'editor' && (
-          <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-            <Heading size="md" mb={4}>Upload Assets</Heading>
-            <Text color="gray.600" mb={4}>Upload new photos, 3D models, or videos to the system</Text>
-            <Button colorScheme="blue" onClick={() => router.push('/dashboard/upload')} width="full">
+          <GlassCard p={6}>
+            <Heading size="md" mb={3}>
+              Upload Assets
+            </Heading>
+            <Text color="gray.600" mb={4}>
+              Upload new photos, 3D models, or videos to the system
+            </Text>
+            <NeonButton w="100%" onClick={() => router.push('/dashboard/upload')}>
               Upload New Asset
-            </Button>
-          </Box>
+            </NeonButton>
+          </GlassCard>
         )}
 
         {currentUser?.role === 'admin' && (
-          <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-            <Heading size="md" mb={4}>User Management</Heading>
-            <Text color="gray.600" mb={4}>Manage system users, roles, and permissions</Text>
-            <Button colorScheme="green" onClick={() => router.push('/dashboard/users')} width="full">
+          <GlassCard p={6}>
+            <Heading size="md" mb={3}>
+              User Management
+            </Heading>
+            <Text color="gray.600" mb={4}>
+              Manage system users, roles, and permissions
+            </Text>
+            <NeonButton w="100%" onClick={() => router.push('/dashboard/users')}>
               Manage Users
-            </Button>
-          </Box>
+            </NeonButton>
+          </GlassCard>
         )}
 
         {currentUser?.role === 'viewer' && (
-          <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-            <Heading size="md" mb={4}>Get Started</Heading>
+          <GlassCard p={6}>
+            <Heading size="md" mb={3}>
+              Get Started
+            </Heading>
             <Text color="gray.600" mb={4}>
               Browse our collection of digital assets and download what you need
             </Text>
-            <Button colorScheme="blue" onClick={() => router.push('/dashboard/assets')} width="full">
+            <NeonButton w="100%" onClick={() => router.push('/dashboard/assets')}>
               Explore Assets
-            </Button>
-          </Box>
+            </NeonButton>
+          </GlassCard>
         )}
       </SimpleGrid>
 
-      {/* 最近活动预览 */}
-      <Box borderWidth="1px" borderRadius="lg" p={6} bg="white" boxShadow="md">
-        <Heading size="md" mb={4}>Recent Activity</Heading>
+      {/* 最近活动：容器用 GlassCard；行用浅透明交替 */}
+      <GlassCard p={6}>
+        <Heading size="md" mb={4}>
+          Recent Activity
+        </Heading>
         <VStack align="stretch" gap={3}>
-          <HStack justify="space-between" p={3} bg="gray.50" borderRadius="md">
+          <HStack
+            justify="space-between"
+            p={3}
+            borderRadius="md"
+            bg="rgba(255,255,255,0.55)"
+          >
             <Box>
-              <Text fontWeight="medium">New asset uploaded: product_design.glb</Text>
-              <Text fontSize="sm" color="gray.500">3D Model • 45.2 MB • By editor1</Text>
+              <Text fontWeight="medium">
+                New asset uploaded: product_design.glb
+              </Text>
+              <Text fontSize="sm" color="gray.600">
+                3D Model • 45.2 MB • By editor1
+              </Text>
             </Box>
-            <Text color="gray.500" fontSize="sm">2 hours ago</Text>
+            <Text color="gray.600" fontSize="sm">
+              2 hours ago
+            </Text>
           </HStack>
-          <HStack justify="space-between" p={3} bg="gray.50" borderRadius="md">
+
+          <HStack
+            justify="space-between"
+            p={3}
+            borderRadius="md"
+            bg="rgba(255,255,255,0.65)"
+          >
             <Box>
-              <Text fontWeight="medium">Asset downloaded: architecture_photo.jpg</Text>
-              <Text fontSize="sm" color="gray.500">Photo • 8.7 MB • By viewer2</Text>
+              <Text fontWeight="medium">
+                Asset downloaded: architecture_photo.jpg
+              </Text>
+              <Text fontSize="sm" color="gray.600">
+                Photo • 8.7 MB • By viewer2
+              </Text>
             </Box>
-            <Text color="gray.500" fontSize="sm">1 day ago</Text>
+            <Text color="gray.600" fontSize="sm">
+              1 day ago
+            </Text>
           </HStack>
+
           {currentUser?.role === 'admin' && (
-            <HStack justify="space-between" p={3} bg="gray.50" borderRadius="md">
+            <HStack
+              justify="space-between"
+              p={3}
+              borderRadius="md"
+              bg="rgba(255, 255, 255, 0.93)"
+            >
               <Box>
-                <Text fontWeight="medium">User role updated: editor3 → viewer</Text>
-                <Text fontSize="sm" color="gray.500">System Administration • By admin</Text>
+                <Text fontWeight="medium">
+                  User role updated: editor3 → viewer
+                </Text>
+                <Text fontSize="sm" color="gray.600">
+                  System Administration • By admin
+                </Text>
               </Box>
-              <Text color="gray.500" fontSize="sm">2 days ago</Text>
+              <Text color="gray.600" fontSize="sm">
+                2 days ago
+              </Text>
             </HStack>
           )}
-          <HStack justify="space-between" p={3} bg="gray.50" borderRadius="md">
+
+          <HStack
+            justify="space-between"
+            p={3}
+            borderRadius="md"
+            bg="rgba(255,255,255,0.65)"
+          >
             <Box>
-              <Text fontWeight="medium">New asset uploaded: character_model.fbx</Text>
-              <Text fontSize="sm" color="gray.500">3D Model • 120.5 MB • By editor2</Text>
+              <Text fontWeight="medium">
+                New asset uploaded: character_model.fbx
+              </Text>
+              <Text fontSize="sm" color="gray.600">
+                3D Model • 120.5 MB • By editor2
+              </Text>
             </Box>
-            <Text color="gray.500" fontSize="sm">2 days ago</Text>
+            <Text color="gray.600" fontSize="sm">
+              2 days ago
+            </Text>
           </HStack>
         </VStack>
-      </Box>
+      </GlassCard>
     </VStack>
   );
 }

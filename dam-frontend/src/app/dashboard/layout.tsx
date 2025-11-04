@@ -8,169 +8,181 @@ import {
   Text,
   Button,
   Spinner,
+  Heading,
 } from '@chakra-ui/react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 type Role = 'admin' | 'editor' | 'viewer';
+type MenuItem = { name: string; path: string; roles: Role[]; strict?: boolean };
 
-type MenuItem = {
-  name: string;
-  path: string;
-  roles: Role[];
-};
+/** 霓虹按钮：文字固定白色，仅背景/描边在激活或悬停时变化 */
+function NeonButton(
+  props: React.ComponentProps<typeof Button> & { active?: boolean }
+) {
+  const { active, ...rest } = props;
+  return (
+    <Button
+      {...rest}
+      color="white"                 /* ← 文字常驻白色 */
+      borderRadius="md"
+      bg={active ? 'rgba(59,130,246,0.20)' : 'transparent'}
+      _hover={{
+        bg: active ? 'rgba(59,130,246,0.28)' : 'rgba(148,163,184,0.15)',
+        transform: 'translateX(2px)',
+        boxShadow: active
+          ? '0 12px 28px rgba(59,130,246,0.25)'
+          : '0 10px 24px rgba(0,0,0,0.06)',
+      }}
+      _active={{ bg: 'rgba(59,130,246,0.32)' }}
+      position="relative"
+      _before={{
+        content: '""',
+        position: 'absolute',
+        inset: 0,
+        borderRadius: 'inherit',
+        padding: '1px',
+        background: active
+          ? 'linear-gradient(90deg,#60a5fa,#a78bfa)'
+          : 'linear-gradient(90deg,#94a3b8,#cbd5e1)',
+        WebkitMask:
+          'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+        WebkitMaskComposite: 'xor',
+        maskComposite: 'exclude',
+        pointerEvents: 'none',
+      }}
+      transition="all .15s ease"
+    />
+  );
+}
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
-  // 只有在 loading 结束后，再根据 user 决定是否重定向
-  useEffect(() => {
-    if (!loading && !user) {
-      router.replace('/login');
-    }
-  }, [loading, user, router]);
+  useEffect(() => { if (!loading && !user) router.replace('/login'); }, [loading, user, router]);
 
-  // 登出：清空状态后回到登录页
-  const handleLogout = async () => {
-    await logout();
-    router.replace('/login');
-  };
+  const handleLogout = async () => { await logout(); router.replace('/login'); };
 
-  // 侧边菜单
   const menuItems: MenuItem[] = useMemo(() => {
     const role = (user?.role ?? 'viewer') as Role;
-
     const base: MenuItem[] = [
-      { name: 'Dashboard',        path: '/dashboard',          roles: ['admin', 'editor', 'viewer'] },
-      { name: 'Assets',           path: '/dashboard/assets',   roles: ['admin', 'editor', 'viewer'] },
-      { name: 'My Profile',       path: '/dashboard/profile',  roles: ['admin', 'editor', 'viewer'] },
+      { name: 'Dashboard', path: '/dashboard', roles: ['admin','editor','viewer'], strict: true },
+      { name: 'Assets', path: '/dashboard/assets', roles: ['admin','editor','viewer'] },
+      { name: 'My Profile', path: '/dashboard/profile', roles: ['admin','editor','viewer'] },
     ];
-
-    if (role === 'editor') {
-      // 插入到 Assets 后面
-      base.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
-    }
-    if (role === 'admin') {
-      // 插入到 Dashboard 后面
-      base.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] });
-    }
-
-    return base.filter((it) => it.roles.includes(role));
+    if (role === 'editor') base.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
+    if (role === 'admin') base.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] });
+    return base.filter(it => it.roles.includes(role));
   }, [user?.role]);
 
-  const getRoleDescription = (r?: Role) => {
-    switch (r) {
-      case 'admin':
-        return 'System Administrator - Manage users and all assets';
-      case 'editor':
-        return 'Content Editor - Upload and manage your own assets';
-      case 'viewer':
-        return 'Viewer - Browse and download assets';
-      default:
-        return '';
-    }
-  };
+  const isActive = (it: MenuItem) =>
+    it.strict ? pathname === it.path : pathname === it.path || pathname.startsWith(it.path + '/');
 
-  const roleColor = (r?: Role) =>
-    r === 'admin' ? 'red.500' : r === 'editor' ? 'blue.500' : 'green.500';
-
-  // 判断高亮：当前路径是否等于或以菜单路径开头（支持子页）
-  const isActive = (path: string) =>
-    pathname === path || pathname.startsWith(path + '/');
-
-  // 首屏：如果还在加载，就给一个中立态，不做跳转
   if (loading) {
     return (
-      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center">
-        <HStack gap={3}>
-          <Spinner />
-          <Text>Checking session...</Text>
-        </HStack>
+      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
+        <HStack gap={3}><Spinner /><Text>Checking session...</Text></HStack>
       </Box>
     );
   }
-
-  // 加载结束但未登录：展示个轻量文案（useEffect 会触发跳转）
   if (!user) {
     return (
-      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center">
+      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
         <Text>Redirecting to login...</Text>
       </Box>
     );
   }
 
-  // 已登录正常渲染
+  const roleColor = (r?: Role) => (r === 'admin' ? 'red.300' : r === 'editor' ? 'blue.300' : 'green.300');
+  const roleDesc = (r?: Role) =>
+    r === 'admin' ? 'System Administrator — Manage users and all assets'
+    : r === 'editor' ? 'Content Editor — Upload and manage your own assets'
+    : 'Viewer — Browse and download assets';
+
   return (
-    <Box minH="100vh" bg="gray.50">
-      <HStack align="start" gap={0}>
-        {/* 侧边栏 */}
+    <Box minH="100vh" position="relative">
+      {/* 背景：赛博深蓝紫（不拦截点击） */}
+      <Box
+        position="fixed" inset="0" zIndex={0} pointerEvents="none"
+        background="
+          radial-gradient(1200px 600px at 10% -10%, rgba(56,189,248,0.18), transparent 60%),
+          radial-gradient(800px 500px at 90% 0%, rgba(139,92,246,0.18), transparent 60%),
+          linear-gradient(180deg, #0a1022 0%, #0b0f2b 35%, #0d1236 100%)"
+      >
         <Box
+          position="absolute" inset="0" opacity={0.15}
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)',
+            backgroundSize: '36px 36px, 36px 36px',
+          }}
+        />
+        <Box position="absolute" top="18%" left="10%" w="420px" h="420px" borderRadius="50%"
+             background="radial-gradient(closest-side, rgba(59,130,246,0.35), transparent)"
+             style={{ filter: 'blur(80px)' }} />
+        <Box position="absolute" bottom="10%" right="6%" w="520px" h="520px" borderRadius="50%"
+             background="radial-gradient(closest-side, rgba(147,51,234,0.35), transparent)"
+             style={{ filter: 'blur(90px)' }} />
+      </Box>
+
+      <HStack align="start" gap={0} position="relative" zIndex={1}>
+        {/* 侧边栏：深色半透明 + 玻璃拟态；文字全白 */}
+        <Box
+          as="nav"
           w={{ base: '220px', md: '250px' }}
-          bg="white"
           minH="100vh"
           p={4}
-          boxShadow="md"
           position="sticky"
           top={0}
+          zIndex={3}
+          borderRight="1px solid rgba(148,163,184,0.25)"
+          background="rgba(13,18,54,0.72)"
+          style={{ backdropFilter: 'blur(8px)' }}
         >
           <VStack align="stretch" gap={6}>
-            <Text fontSize="xl" fontWeight="bold" mb={2}>
-              DAM System
-            </Text>
-
             <Box>
-              <Text fontSize="sm" color="gray.600" mb={1}>
-                Welcome, {user.first_name || user.username}
-              </Text>
-              <Text
-                fontSize="xs"
-                color={roleColor(user.role as Role)}
-                fontWeight="bold"
-                mb={1}
-              >
+              <Heading size="md" mb={1} color="white" letterSpacing="0.3px">DAM System</Heading>
+              <Text fontSize="sm" color="gray.200" mb={1}>Welcome, {user.first_name || user.username}</Text>
+              <Text fontSize="xs" color={roleColor(user.role as Role)} fontWeight="bold" mb={1}>
                 Role: {(user.role || '').toUpperCase()}
               </Text>
-              <Text fontSize="xs" color="gray.500">
-                {getRoleDescription(user.role as Role)}
-              </Text>
+              <Text fontSize="xs" color="gray.300">{roleDesc(user.role as Role)}</Text>
             </Box>
 
             <VStack align="stretch" gap={2}>
-              {menuItems.map((item) => (
-                <Button
-                  key={item.path}
-                  variant={isActive(item.path) ? 'solid' : 'ghost'}
-                  colorScheme={isActive(item.path) ? 'blue' : 'gray'}
-                  justifyContent="start"
-                  onClick={() => router.push(item.path)}
-                  size="sm"
-                >
-                  {item.name}
-                </Button>
-              ))}
-
-              <Button
+              {menuItems.map((item) => {
+                const active = isActive(item);
+                return (
+                  <NeonButton
+                    key={item.path}
+                    active={active}
+                    variant={active ? 'solid' : 'ghost'}
+                    justifyContent="start"
+                    size="sm"
+                    fontWeight={active ? 'bold' : 'normal'}
+                    onClick={() => router.push(item.path)}
+                  >
+                    {item.name}
+                  </NeonButton>
+                );
+              })}
+              <NeonButton
                 variant="ghost"
-                colorScheme="red"
                 justifyContent="start"
                 onClick={handleLogout}
                 mt={4}
                 size="sm"
               >
                 Log Out
-              </Button>
+              </NeonButton>
             </VStack>
           </VStack>
         </Box>
 
         {/* 主内容 */}
-        <Box flex={1} p={{ base: 4, md: 6 }}>
+        <Box as="main" flex={1} p={{ base: 4, md: 6 }} position="relative" zIndex={2}>
           {children}
         </Box>
       </HStack>
