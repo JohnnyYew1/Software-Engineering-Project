@@ -3,10 +3,10 @@ import os
 from datetime import timedelta
 import mimetypes
 
-# ✅ 补充常见模型/文档类型
+# ✅ 常见模型/文档类型
 mimetypes.add_type("model/gltf-binary", ".glb")
 mimetypes.add_type("model/gltf+json", ".gltf")
-mimetypes.add_type("application/pdf", ".pdf")  # <-- 新增，兜底 PDF
+mimetypes.add_type("application/pdf", ".pdf")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # 3rd party
     "rest_framework",
+    "rest_framework_simplejwt",  # ★ 加上 SimpleJWT（与你前端的 Bearer Token 对齐）
     "corsheaders",
     "django_filters",
     # local
@@ -93,10 +94,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# ★ 强烈建议：保留 Session 只用于 /admin/ 后台；业务 API 以 JWT 为主（顺序：JWT 优先）
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",   # ★ 放前面
         "rest_framework.authentication.SessionAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -111,9 +113,10 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=6),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # 可按需补充其他选项
 }
 
-# ---- CORS / CSRF（允许跨域携带 Cookie）----
+# ---- CORS / CSRF（允许跨域；你前端用 JWT，不走 Cookie，但保留无害）----
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
@@ -126,8 +129,11 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-# 本地开发 Cookie 策略
+# 本地开发 Cookie 策略（即使 JWT，不影响）
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+
+# ★ 确保 Django 会把不带斜杠的请求重定向到带斜杠（DRF Router 默认也是尾斜杠）
+APPEND_SLASH = True

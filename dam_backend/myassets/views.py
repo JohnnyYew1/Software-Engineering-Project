@@ -1,9 +1,12 @@
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.http import JsonResponse, FileResponse
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -12,11 +15,18 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Max, F, Count, Q
 from django.db import transaction, IntegrityError, connection
 
+from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth.models import User
+from .serializers import AdminUserReadSerializer, AdminUserWriteSerializer
+from .permissions import IsAdminRole
+
 from django.core.cache import cache  # ★ 新增：用于 view_count 去抖
 import mimetypes
 import os
 import urllib.parse
 import traceback
+import re
 
 from .models import Asset, Tag, UserProfile, AssetVersion
 from .serializers import (
@@ -27,6 +37,13 @@ from .serializers import (
 )
 from .permissions import AssetPermission
 
+
+User = get_user_model()
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def ping(request):
+    return Response({"ok": True, "api_root": "/api/ is alive"})
 
 @ensure_csrf_cookie
 def csrf(request):
@@ -79,6 +96,180 @@ def _client_ip(request) -> str:
     if xff:
         return xff.split(",")[0].strip()
     return request.META.get("REMOTE_ADDR") or "0.0.0.0"
+
+
+def _role_of(user) -> str:
+    return getattr(getattr(user, "userprofile", None), "role", "viewer").lower()
+
+
+def _is_admin(user) -> bool:
+    # 允许 Django 超级用户 或 userprofile.role == admin
+    return bool(getattr(user, "is_superuser", False) or _role_of(user) == "admin")
+
+
+# ---------------- Admin：用户管理 API（新增，不影响其它功能） ----------------
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def admin_users(request):
+    """
+    GET  /api/admin/users/          -> 列出用户（含 role）
+    POST /api/admin/users/          -> 创建用户（username, password, role=admin|editor|viewer, email 可选）
+    """
+    if not _is_admin(request.user):
+        return Response({"detail": "Permission denied."}, status=403)
+
+    if request.method == "GET":
+        # 带出 role、is_active、date_joined
+        profiles = {p.user_id: p.role for p in UserProfile.objects.all()}
+        data = []
+        for u in User.objects.all().order_by("id"):
+            data.append({
+                "id": u.id,
+                "username": u.username,
+                "email": getattr(u, "email", "") or "",
+                "role": profiles.get(u.id, "viewer"),
+                "is_active": u.is_active,
+                "date_joined": getattr(u, "date_joined", None),
+            })
+        return Response(data, status=200)
+
+    # POST
+    payload = request.data or {}
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    email = (payload.get("email") or "").strip()
+    role = (payload.get("role") or "viewer").strip().lower()
+    first_name = (payload.get("first_name") or "").strip()
+    last_name = (payload.get("last_name") or "").strip()
+
+    if not username or not password:
+        return Response({"detail": "username and password are required"}, status=400)
+
+    if role not in ("admin", "editor", "viewer"):
+        return Response({"detail": "role must be one of: admin, editor, viewer"}, status=400)
+
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return Response({"detail": "invalid email"}, status=400)
+
+    try:
+        with transaction.atomic():
+            if User.objects.filter(username=username).exists():
+                return Response({"detail": "username already exists"}, status=409)
+
+            user = User(username=username, email=email or "")
+            user.first_name = first_name
+            user.last_name = last_name
+            user.set_password(password)
+            user.is_active = True
+            user.save()
+
+            # 确保有 profile 并设置角色
+            profile, _ = UserProfile.objects.get_or_create(user=user, defaults={"role": role})
+            if not _:
+                profile.role = role
+                profile.save(update_fields=["role"])
+
+        return Response({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": role,
+            "is_active": user.is_active,
+            "date_joined": getattr(user, "date_joined", None),
+        }, status=201)
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"detail": f"create failed: {str(e)}"}, status=400)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def admin_user_detail(request, user_id: int):
+    """
+    PATCH /api/admin/users/<id>/    -> 更新用户（role / is_active / password / email / name）
+    DELETE /api/admin/users/<id>/   -> 删除用户（禁止自删；禁止删除超级用户）
+    """
+    if not _is_admin(request.user):
+        return Response({"detail": "Permission denied."}, status=403)
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "User not found"}, status=404)
+
+    # 禁止删除 / 修改超级用户的超级属性（但可改 profile.role，不建议）
+    if request.method == "DELETE":
+        if user.id == request.user.id:
+            return Response({"detail": "You cannot delete yourself."}, status=400)
+        if getattr(user, "is_superuser", False):
+            return Response({"detail": "Cannot delete superuser."}, status=400)
+        user.delete()
+        # 同步删除 profile（若存在）
+        UserProfile.objects.filter(user_id=user_id).delete()
+        return Response(status=204)
+
+    # PATCH
+    payload = request.data or {}
+    changed = False
+
+    # role
+    if "role" in payload:
+        role = (payload.get("role") or "").strip().lower()
+        if role not in ("admin", "editor", "viewer"):
+            return Response({"detail": "role must be one of: admin, editor, viewer"}, status=400)
+        profile, _ = UserProfile.objects.get_or_create(user=user, defaults={"role": role})
+        if profile.role != role:
+            profile.role = role
+            profile.save(update_fields=["role"])
+        changed = True
+
+    # is_active
+    if "is_active" in payload:
+        is_active = bool(payload.get("is_active"))
+        if user.is_active != is_active:
+            # 防止把自己禁用，导致尴尬
+            if user.id == request.user.id and not is_active:
+                return Response({"detail": "You cannot deactivate yourself."}, status=400)
+            user.is_active = is_active
+            changed = True
+
+    # email / first_name / last_name
+    if "email" in payload:
+        email = (payload.get("email") or "").strip()
+        if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return Response({"detail": "invalid email"}, status=400)
+        user.email = email
+        changed = True
+    if "first_name" in payload:
+        user.first_name = (payload.get("first_name") or "").strip()
+        changed = True
+    if "last_name" in payload:
+        user.last_name = (payload.get("last_name") or "").strip()
+        changed = True
+
+    # password（可选重置）
+    if "password" in payload:
+        pwd = payload.get("password") or ""
+        if len(pwd) < 6:
+            return Response({"detail": "password too short (>=6)"}, status=400)
+        user.set_password(pwd)
+        changed = True
+
+    if changed:
+        user.save()
+
+    # 输出当前信息（含 role）
+    role_now = _role_of(user)
+    return Response({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": role_now,
+        "is_active": user.is_active,
+        "date_joined": getattr(user, "date_joined", None),
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+    }, status=200)
 
 
 # ---------------- Assets ----------------
@@ -382,3 +573,19 @@ class UserProfileViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = UserProfile.objects.select_related("user").all()
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
+
+
+
+class AdminUserViewSet(viewsets.ModelViewSet):
+    """
+    /api/admin/users/  列表/创建
+    /api/admin/users/<id>/  读/改/删
+    仅 Admin 角色可访问
+    """
+    queryset = User.objects.all().order_by("id").select_related("userprofile")
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    def get_serializer_class(self):
+        if self.request.method in ("POST", "PUT", "PATCH"):
+            return AdminUserWriteSerializer
+        return AdminUserReadSerializer
