@@ -21,20 +21,22 @@ type Stats = {
   totalUsers?: number;
 };
 
-// 统一霓虹按钮（Chakra v3 兼容）
+/* ========== 粉色玻璃拟态主题（与 Users/Preview/Upload 一致） ========== */
+const PINK_BG = 'rgba(253, 242, 248, 0.80)';
+const PINK_BG_ALT = 'rgba(253, 242, 248, 0.92)';
+const PINK_BORDER = 'rgba(244, 114, 182, 0.45)';
+const PINK_SHADOW = '0 18px 48px rgba(244, 114, 182, 0.25)';
+
+/* 霓虹按钮：白字、透明底、粉→紫描边 */
 function NeonButton(props: React.ComponentProps<typeof Button>) {
+  const { color, variant, ...rest } = props;
   return (
     <Button
-      {...props}
-      color="white"
+      {...rest}
+      variant={variant ?? 'ghost'}
+      color={color ?? 'white'}
+      bg="transparent"
       borderRadius="md"
-      bg="rgba(59,130,246,0.20)"
-      _hover={{
-        bg: 'rgba(59,130,246,0.28)',
-        transform: 'translateY(-1px)',
-        boxShadow: '0 12px 28px rgba(59,130,246,0.25)',
-      }}
-      _active={{ bg: 'rgba(59,130,246,0.35)' }}
       position="relative"
       _before={{
         content: '""',
@@ -42,13 +44,16 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
         inset: 0,
         borderRadius: 'inherit',
         padding: '1px',
-        background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+        background: 'linear-gradient(90deg,#f472b6,#8b5cf6)',
         WebkitMask:
           'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         WebkitMaskComposite: 'xor',
         maskComposite: 'exclude',
         pointerEvents: 'none',
       }}
+      _hover={{ transform: 'translateY(-1px)', boxShadow: PINK_SHADOW }}
+      _active={{ transform: 'translateY(0)' }}
+      _focusVisible={{ boxShadow: 'none' }}
       transition="all .15s ease"
     />
   );
@@ -57,7 +62,6 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
 export default function Dashboard() {
   const router = useRouter();
   const { user, loading } = useAuth();
-
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
@@ -81,9 +85,7 @@ export default function Dashboard() {
       totalDownloads: 1247,
       recentActivity: 23,
     };
-    if (currentUser?.role === 'admin') {
-      return { ...baseStats, totalUsers: 8 };
-    }
+    if (currentUser?.role === 'admin') return { ...baseStats, totalUsers: 8 };
     return baseStats;
   };
 
@@ -122,15 +124,14 @@ export default function Dashboard() {
 
   return (
     <VStack align="stretch" gap={6}>
-      {/* 顶部标题（白字，匹配深色背景） */}
+      {/* 顶部标题 */}
       <Box>
         <Heading color="white">Dashboard</Heading>
-        <Text fontSize="xl" color="blue.300" fontWeight="bold">
+        <Text fontSize="xl" color="pink.300" fontWeight="bold">
           {welcomeTitle}
         </Text>
         <Text fontSize="sm" color="gray.300" mt={1}>
-          Welcome back, {currentUser?.first_name || currentUser?.username}! You
-          are logged in as{' '}
+          Welcome back, {currentUser?.first_name || currentUser?.username}! You are logged in as{' '}
           <Text
             as="span"
             fontWeight="bold"
@@ -147,87 +148,52 @@ export default function Dashboard() {
         </Text>
       </Box>
 
-      {/* 统计卡片：70% 透明玻璃卡 */}
+      {/* 统计卡片（用 GlassCard + 粉色主题内容） */}
       <SimpleGrid
         columns={{ base: 1, md: currentUser?.role === 'admin' ? 4 : 3 }}
         gap={6}
       >
-        <GlassCard p={6}>
-          <Text fontSize="sm" color="gray.600">
-            Total Assets
-          </Text>
-          <Text fontSize="3xl" fontWeight="bold">
-            {stats.totalAssets}
-          </Text>
-          <Text fontSize="xs" color="gray.600">
-            Photos, 3D Models & Videos
-          </Text>
+        <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+          <Text fontSize="sm" color="gray.700">Total Assets</Text>
+          <Text fontSize="3xl" fontWeight="bold" color="gray.900">{stats.totalAssets}</Text>
+          <Text fontSize="xs" color="gray.700">Photos, 3D Models & Videos</Text>
         </GlassCard>
 
-        <GlassCard p={6}>
-          <Text fontSize="sm" color="gray.600">
-            Total Downloads
-          </Text>
-          <Text fontSize="3xl" fontWeight="bold">
-            {stats.totalDownloads}
-          </Text>
-          <Text fontSize="xs" color="gray.600">
-            All time downloads
-          </Text>
+        <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+          <Text fontSize="sm" color="gray.700">Total Downloads</Text>
+          <Text fontSize="3xl" fontWeight="bold" color="gray.900">{stats.totalDownloads}</Text>
+          <Text fontSize="xs" color="gray.700">All time downloads</Text>
         </GlassCard>
 
-        <GlassCard p={6}>
-          <Text fontSize="sm" color="gray.600">
-            Recent Activity
-          </Text>
-          <Text fontSize="3xl" fontWeight="bold">
-            {stats.recentActivity}
-          </Text>
-          <Text fontSize="xs" color="gray.600">
-            Last 30 days
-          </Text>
+        <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+          <Text fontSize="sm" color="gray.700">Recent Activity</Text>
+          <Text fontSize="3xl" fontWeight="bold" color="gray.900">{stats.recentActivity}</Text>
+          <Text fontSize="xs" color="gray.700">Last 30 days</Text>
         </GlassCard>
 
         {currentUser?.role === 'admin' && stats.totalUsers !== undefined && (
-          <GlassCard p={6}>
-            <Text fontSize="sm" color="gray.600">
-              Total Users
-            </Text>
-            <Text fontSize="3xl" fontWeight="bold">
-              {stats.totalUsers}
-            </Text>
-            <Text fontSize="xs" color="gray.600">
-              System users
-            </Text>
+          <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+            <Text fontSize="sm" color="gray.700">Total Users</Text>
+            <Text fontSize="3xl" fontWeight="bold" color="gray.900">{stats.totalUsers}</Text>
+            <Text fontSize="xs" color="gray.700">System users</Text>
           </GlassCard>
         )}
       </SimpleGrid>
 
-      {/* 快捷操作：透明卡 + 霓虹按钮 */}
-      <SimpleGrid
-        columns={{ base: 1, md: currentUser?.role === 'admin' ? 3 : 2 }}
-        gap={6}
-      >
-        <GlassCard p={6}>
-          <Heading size="md" mb={3}>
-            Browse Assets
-          </Heading>
-          <Text color="gray.600" mb={4}>
-            Explore all available digital assets in the system
-          </Text>
+      {/* 快捷操作 */}
+      <SimpleGrid columns={{ base: 1, md: currentUser?.role === 'admin' ? 3 : 2 }} gap={6}>
+        <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+          <Heading size="md" mb={3} color="gray.900">Browse Assets</Heading>
+          <Text color="gray.800" mb={4}>Explore all available digital assets in the system</Text>
           <NeonButton w="100%" onClick={() => router.push('/dashboard/assets')}>
             View All Assets
           </NeonButton>
         </GlassCard>
 
         {currentUser?.role === 'editor' && (
-          <GlassCard p={6}>
-            <Heading size="md" mb={3}>
-              Upload Assets
-            </Heading>
-            <Text color="gray.600" mb={4}>
-              Upload new photos, 3D models, or videos to the system
-            </Text>
+          <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+            <Heading size="md" mb={3} color="gray.900">Upload Assets</Heading>
+            <Text color="gray.800" mb={4}>Upload new photos, 3D models, or videos to the system</Text>
             <NeonButton w="100%" onClick={() => router.push('/dashboard/upload')}>
               Upload New Asset
             </NeonButton>
@@ -235,13 +201,9 @@ export default function Dashboard() {
         )}
 
         {currentUser?.role === 'admin' && (
-          <GlassCard p={6}>
-            <Heading size="md" mb={3}>
-              User Management
-            </Heading>
-            <Text color="gray.600" mb={4}>
-              Manage system users, roles, and permissions
-            </Text>
+          <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+            <Heading size="md" mb={3} color="gray.900">User Management</Heading>
+            <Text color="gray.800" mb={4}>Manage system users, roles, and permissions</Text>
             <NeonButton w="100%" onClick={() => router.push('/dashboard/users')}>
               Manage Users
             </NeonButton>
@@ -249,13 +211,9 @@ export default function Dashboard() {
         )}
 
         {currentUser?.role === 'viewer' && (
-          <GlassCard p={6}>
-            <Heading size="md" mb={3}>
-              Get Started
-            </Heading>
-            <Text color="gray.600" mb={4}>
-              Browse our collection of digital assets and download what you need
-            </Text>
+          <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+            <Heading size="md" mb={3} color="gray.900">Get Started</Heading>
+            <Text color="gray.800" mb={4}>Browse our collection of digital assets and download what you need</Text>
             <NeonButton w="100%" onClick={() => router.push('/dashboard/assets')}>
               Explore Assets
             </NeonButton>
@@ -263,88 +221,42 @@ export default function Dashboard() {
         )}
       </SimpleGrid>
 
-      {/* 最近活动：容器用 GlassCard；行用浅透明交替 */}
-      <GlassCard p={6}>
-        <Heading size="md" mb={4}>
-          Recent Activity
-        </Heading>
+      {/* 最近活动：容器 GlassCard，条目交替粉色透明 */}
+      <GlassCard p={6} bg={PINK_BG} border={`1px solid ${PINK_BORDER}`} boxShadow={PINK_SHADOW}>
+        <Heading size="md" mb={4} color="gray.900">Recent Activity</Heading>
         <VStack align="stretch" gap={3}>
-          <HStack
-            justify="space-between"
-            p={3}
-            borderRadius="md"
-            bg="rgba(255,255,255,0.55)"
-          >
+          <HStack justify="space-between" p={3} borderRadius="md" bg={PINK_BG}>
             <Box>
-              <Text fontWeight="medium">
-                New asset uploaded: product_design.glb
-              </Text>
-              <Text fontSize="sm" color="gray.600">
-                3D Model • 45.2 MB • By editor1
-              </Text>
+              <Text fontWeight="medium" color="gray.900">New asset uploaded: product_design.glb</Text>
+              <Text fontSize="sm" color="gray.700">3D Model • 45.2 MB • By editor1</Text>
             </Box>
-            <Text color="gray.600" fontSize="sm">
-              2 hours ago
-            </Text>
+            <Text color="gray.700" fontSize="sm">2 hours ago</Text>
           </HStack>
 
-          <HStack
-            justify="space-between"
-            p={3}
-            borderRadius="md"
-            bg="rgba(255,255,255,0.65)"
-          >
+          <HStack justify="space-between" p={3} borderRadius="md" bg={PINK_BG_ALT}>
             <Box>
-              <Text fontWeight="medium">
-                Asset downloaded: architecture_photo.jpg
-              </Text>
-              <Text fontSize="sm" color="gray.600">
-                Photo • 8.7 MB • By viewer2
-              </Text>
+              <Text fontWeight="medium" color="gray.900">Asset downloaded: architecture_photo.jpg</Text>
+              <Text fontSize="sm" color="gray.700">Photo • 8.7 MB • By viewer2</Text>
             </Box>
-            <Text color="gray.600" fontSize="sm">
-              1 day ago
-            </Text>
+            <Text color="gray.700" fontSize="sm">1 day ago</Text>
           </HStack>
 
           {currentUser?.role === 'admin' && (
-            <HStack
-              justify="space-between"
-              p={3}
-              borderRadius="md"
-              bg="rgba(255, 255, 255, 0.93)"
-            >
+            <HStack justify="space-between" p={3} borderRadius="md" bg="rgba(255,255,255,0.93)">
               <Box>
-                <Text fontWeight="medium">
-                  User role updated: editor3 → viewer
-                </Text>
-                <Text fontSize="sm" color="gray.600">
-                  System Administration • By admin
-                </Text>
+                <Text fontWeight="medium" color="gray.900">User role updated: editor3 → viewer</Text>
+                <Text fontSize="sm" color="gray.700">System Administration • By admin</Text>
               </Box>
-              <Text color="gray.600" fontSize="sm">
-                2 days ago
-              </Text>
+              <Text color="gray.700" fontSize="sm">2 days ago</Text>
             </HStack>
           )}
 
-          <HStack
-            justify="space-between"
-            p={3}
-            borderRadius="md"
-            bg="rgba(255,255,255,0.65)"
-          >
+          <HStack justify="space-between" p={3} borderRadius="md" bg={PINK_BG_ALT}>
             <Box>
-              <Text fontWeight="medium">
-                New asset uploaded: character_model.fbx
-              </Text>
-              <Text fontSize="sm" color="gray.600">
-                3D Model • 120.5 MB • By editor2
-              </Text>
+              <Text fontWeight="medium" color="gray.900">New asset uploaded: character_model.fbx</Text>
+              <Text fontSize="sm" color="gray.700">3D Model • 120.5 MB • By editor2</Text>
             </Box>
-            <Text color="gray.600" fontSize="sm">
-              2 days ago
-            </Text>
+            <Text color="gray.700" fontSize="sm">2 days ago</Text>
           </HStack>
         </VStack>
       </GlassCard>

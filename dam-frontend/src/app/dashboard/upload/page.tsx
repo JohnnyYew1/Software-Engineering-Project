@@ -19,6 +19,47 @@ import { listTags } from '@/services/assets';
 
 type Tag = { id: number; name: string; color?: string };
 
+/* ========= 粉色玻璃拟态主题（与 Users/Tags/Preview 一致） ========= */
+const PINK_BG     = 'rgba(253, 242, 248, 0.80)';
+const PINK_BG_ALT = 'rgba(253, 242, 248, 0.92)';
+const PINK_BORDER = 'rgba(244, 114, 182, 0.45)';
+const PINK_SHADOW = '0 18px 48px rgba(244, 114, 182, 0.25)';
+
+/* 霓虹按钮：白字、透明底、粉→紫描边 */
+function NeonButton(props: React.ComponentProps<typeof Button>) {
+  const { color, variant, ...rest } = props;
+  return (
+    <Button
+      {...rest}
+      variant={variant ?? 'ghost'}
+      color={color ?? 'white'}
+      bg="transparent"
+      borderRadius="md"
+      position="relative"
+      _before={{
+        content: '""',
+        position: 'absolute',
+        inset: 0,
+        borderRadius: 'inherit',
+        padding: '1px',
+        background: 'linear-gradient(90deg,#f472b6,#8b5cf6)',
+        WebkitMask:
+          'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+        WebkitMaskComposite: 'xor',
+        maskComposite: 'exclude',
+        pointerEvents: 'none',
+      }}
+      _hover={{
+        transform: 'translateY(-1px)',
+        boxShadow: PINK_SHADOW,
+      }}
+      _active={{ transform: 'translateY(0)' }}
+      _focusVisible={{ boxShadow: 'none' }}
+      transition="all .15s ease"
+    />
+  );
+}
+
 export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -43,9 +84,7 @@ export default function UploadPage() {
         type: 'error',
         text: 'Access denied. You do not have permission to upload assets. Redirecting to assets page...',
       });
-      const t = setTimeout(() => {
-        router.push('/dashboard/assets');
-      }, 3000);
+      const t = setTimeout(() => router.push('/dashboard/assets'), 3000);
       return () => clearTimeout(t);
     }
   }, [router]);
@@ -209,12 +248,12 @@ export default function UploadPage() {
       <VStack align="stretch" gap={6}>
         <Heading color="white">Upload Asset</Heading>
         <Box
-          bg="rgba(255,255,255,0.70)"
+          bg={PINK_BG}
           color="gray.900"
           p={4}
-          borderRadius="md"
-          border="1px solid rgba(255,255,255,0.35)"
-          boxShadow="0 10px 30px rgba(0,0,0,0.18)"
+          borderRadius="20px"
+          border={`1px solid ${PINK_BORDER}`}
+          boxShadow={PINK_SHADOW}
           style={{ backdropFilter: 'blur(8px)' }}
         >
           <Text fontWeight="bold" mb={2}>
@@ -232,35 +271,34 @@ export default function UploadPage() {
 
       {message && (
         <Box
-          bg="rgba(255,255,255,0.70)"
+          bg={PINK_BG}
           color={message.type === 'error' ? 'red.800' : 'green.800'}
           p={3}
-          borderRadius="md"
-          borderWidth="1px"
-          borderColor={message.type === 'error' ? 'rgba(252,165,165,0.90)' : 'rgba(187,247,208,0.90)'}
-          boxShadow="0 10px 30px rgba(0,0,0,0.18)"
+          borderRadius="20px"
+          border={`1px solid ${PINK_BORDER}`}
+          boxShadow={PINK_SHADOW}
           style={{ backdropFilter: 'blur(8px)' }}
         >
           {message.text}
         </Box>
       )}
 
-      {/* DnD 卡片：半透明 70% */}
+      {/* 拖拽上传卡片：粉色玻璃 */}
       <Box
-        bg="rgba(255,255,255,0.70)"
-        border="1px solid rgba(226,232,240,0.90)"
+        bg={PINK_BG}
+        border={`1px solid ${PINK_BORDER}`}
         borderRadius="20px"
-        boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+        boxShadow={PINK_SHADOW}
         p={8}
         style={{ backdropFilter: 'blur(8px)' }}
       >
         <Box
           border="2px dashed"
-          borderColor={dragOver ? 'blue.300' : 'rgba(203,213,225,0.9)'}
+          borderColor={dragOver ? 'rgba(244,114,182,0.9)' : PINK_BORDER}
           borderRadius="16px"
           p={8}
           textAlign="center"
-          bg={dragOver ? 'rgba(59,130,246,0.08)' : 'rgba(255,255,255,0.85)'}
+          bg={dragOver ? 'rgba(244,114,182,0.10)' : PINK_BG_ALT}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -272,33 +310,14 @@ export default function UploadPage() {
             <Text fontSize="xl" fontWeight="bold" color="gray.900">
               {selectedFile ? 'File Selected' : 'Drag & Drop Files Here'}
             </Text>
-            <Text color="gray.700">
+            <Text color="gray.800">
               {selectedFile ? selectedFile.name : 'or click to select files from your computer'}
             </Text>
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="gray.700">
               Supports: JPG, PNG (Images), GLB (3D Models), MP4 (Videos), PDF (Documents)
             </Text>
             {!selectedFile && (
-              <Button
-                borderRadius="md"
-                position="relative"
-                _before={{
-                  content: '""',
-                  position: 'absolute',
-                  inset: 0,
-                  borderRadius: 'inherit',
-                  padding: '1px',
-                  background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
-                  WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-                  WebkitMaskComposite: 'xor',
-                  maskComposite: 'exclude',
-                  pointerEvents: 'none',
-                }}
-                color="white"
-                bg="linear-gradient(90deg,#3b82f6,#8b5cf6)"
-              >
-                Select Files
-              </Button>
+              <NeonButton> Select Files </NeonButton>
             )}
           </VStack>
           <Input
@@ -311,15 +330,15 @@ export default function UploadPage() {
         </Box>
       </Box>
 
-      {/* 文件信息 + 表单 卡片：半透明 60% */}
+      {/* 文件信息 + 表单：粉色玻璃 */}
       {selectedFile && (
         <VStack
           align="stretch"
           gap={4}
-          bg="rgba(255,255,255,0.60)"
-          border="1px solid rgba(226,232,240,0.90)"
+          bg={PINK_BG}
+          border={`1px solid ${PINK_BORDER}`}
           borderRadius="20px"
-          boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+          boxShadow={PINK_SHADOW}
           p={6}
           style={{ backdropFilter: 'blur(8px)' }}
         >
@@ -332,7 +351,7 @@ export default function UploadPage() {
               Selected File:
             </Text>
             <Text color="gray.800">{selectedFile.name}</Text>
-            <Text fontSize="sm" color="gray.600">
+            <Text fontSize="sm" color="gray.700">
               Type: {getFileTypeDisplay(selectedFile.name)} | Size:{' '}
               {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
             </Text>
@@ -343,7 +362,12 @@ export default function UploadPage() {
               <Text fontWeight="medium" mb={2} color="gray.900">
                 Asset Name *
               </Text>
-              <Input placeholder="Enter asset name" value={assetData.name} onChange={handleInputChange('name')} bg="white" />
+              <Input
+                placeholder="Enter asset name"
+                value={assetData.name}
+                onChange={handleInputChange('name')}
+                bg="white"
+              />
             </Box>
 
             <HStack gap={4}>
@@ -351,13 +375,23 @@ export default function UploadPage() {
                 <Text fontWeight="medium" mb={2} color="gray.900">
                   Asset Number
                 </Text>
-                <Input placeholder="Enter asset number" value={assetData.assetNo} onChange={handleInputChange('assetNo')} bg="white" />
+                <Input
+                  placeholder="Enter asset number"
+                  value={assetData.assetNo}
+                  onChange={handleInputChange('assetNo')}
+                  bg="white"
+                />
               </Box>
               <Box flex={1}>
                 <Text fontWeight="medium" mb={2} color="gray.900">
                   Brand
                 </Text>
-                <Input placeholder="Enter brand" value={assetData.brand} onChange={handleInputChange('brand')} bg="white" />
+                <Input
+                  placeholder="Enter brand"
+                  value={assetData.brand}
+                  onChange={handleInputChange('brand')}
+                  bg="white"
+                />
               </Box>
             </HStack>
 
@@ -365,10 +399,16 @@ export default function UploadPage() {
               <Text fontWeight="medium" mb={2} color="gray.900">
                 Description
               </Text>
-              <Textarea placeholder="Describe this asset..." rows={4} value={assetData.description} onChange={handleInputChange('description')} bg="white" />
+              <Textarea
+                placeholder="Describe this asset..."
+                rows={4}
+                value={assetData.description}
+                onChange={handleInputChange('description')}
+                bg="white"
+              />
             </Box>
 
-            {/* 标签多选（弹出层） */}
+            {/* 标签多选（弹出层）：粉色玻璃 */}
             <Box position="relative" ref={dropdownRef as any}>
               <Text fontWeight="medium" mb={2} color="gray.900">
                 Tags
@@ -377,11 +417,14 @@ export default function UploadPage() {
                 variant="outline"
                 onClick={() => openTagDropdown()}
                 style={{ justifyContent: 'space-between', width: '100%' }}
-                borderColor="rgba(226,232,240,0.90)"
-                bg="rgba(255,255,255,0.85)"
+                borderColor={PINK_BORDER}
+                bg={PINK_BG_ALT}
               >
                 <HStack justify="space-between" width="100%">
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={selectedTagNames}>
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={selectedTagNames}
+                  >
                     {selectedTagNames}
                   </span>
                   <span style={{ fontSize: 12, lineHeight: 1 }}>▾</span>
@@ -392,18 +435,18 @@ export default function UploadPage() {
                 <Box
                   position="absolute"
                   zIndex={20}
-                  bg="rgba(255,255,255,0.70)"
-                  border="1px solid rgba(226,232,240,0.90)"
+                  bg={PINK_BG}
+                  border={`1px solid ${PINK_BORDER}`}
                   borderRadius="16px"
                   mt={2}
                   w="100%"
-                  boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+                  boxShadow={PINK_SHADOW}
                   p={2}
                   style={{ backdropFilter: 'blur(10px)' }}
                 >
                   <Box maxHeight="220px" overflowY="auto" style={{ padding: '6px 4px' }}>
                     {allTags.length === 0 && (
-                      <Text fontSize="sm" color="gray.600" p={2}>
+                      <Text fontSize="sm" color="gray.700" p={2}>
                         No tags available. (Managed by Admin)
                       </Text>
                     )}
@@ -418,7 +461,7 @@ export default function UploadPage() {
                             gap: 8,
                             padding: '8px 6px',
                             borderRadius: 8,
-                            background: checked ? '#F7FAFC' : 'transparent',
+                            background: checked ? PINK_BG_ALT : 'transparent',
                             cursor: 'pointer',
                           }}
                           onMouseDown={(e) => e.preventDefault()}
@@ -440,7 +483,7 @@ export default function UploadPage() {
                     >
                       Cancel
                     </Button>
-                    <Button size="sm" colorScheme="blue" onClick={applyTags}>
+                    <Button size="sm" colorScheme="pink" onClick={applyTags}>
                       Done
                     </Button>
                   </HStack>
@@ -448,42 +491,21 @@ export default function UploadPage() {
               )}
 
               {selectedTagIds.length > 0 && (
-                <Text mt={2} fontSize="sm" color="gray.700">
+                <Text mt={2} fontSize="sm" color="gray.800">
                   Selected: {selectedTagNames}
                 </Text>
               )}
               {selectedTagIds.length === 0 && (
-                <Text mt={2} fontSize="sm" color="gray.600">
+                <Text mt={2} fontSize="sm" color="gray.700">
                   * Tags are managed by Admin. Editors can only select existing tags.
                 </Text>
               )}
             </Box>
 
             <HStack gap={4} mt={4}>
-              <Button
-                onClick={handleUpload}
-                disabled={uploading}
-                borderRadius="md"
-                position="relative"
-                _before={{
-                  content: '""',
-                  position: 'absolute',
-                  inset: 0,
-                  borderRadius: 'inherit',
-                  padding: '1px',
-                  background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
-                  WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-                  WebkitMaskComposite: 'xor',
-                  maskComposite: 'exclude',
-                  pointerEvents: 'none',
-                }}
-                color="white"
-                bg="linear-gradient(90deg,#3b82f6,#8b5cf6)"
-                _hover={{ transform: 'translateY(-1px)' }}
-                transition="all .15s ease"
-              >
+              <NeonButton onClick={handleUpload} disabled={uploading}>
                 {uploading ? 'Uploading…' : 'Upload Asset'}
-              </Button>
+              </NeonButton>
               <Button variant="outline" onClick={handleClear} disabled={uploading}>
                 Clear
               </Button>

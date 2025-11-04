@@ -11,6 +11,7 @@ import {
   listTags,
   downloadAssetBlob,
   saveBlob,
+  deleteAsset, // 删除 API
 } from '@/services/assets';
 import {
   Box,
@@ -27,6 +28,14 @@ import {
   Center,
   Input,
 } from '@chakra-ui/react';
+import { authService } from '@/services/auth';
+import { permissions } from '@/utils/permissions';
+
+/* ===== 主题色：粉色玻璃拟态 ===== */
+const PINK_BG = 'rgba(253, 242, 248, 0.80)';         // 背景
+const PINK_BG_ALT = 'rgba(253, 242, 248, 0.92)';     // 行条纹
+const PINK_BORDER = 'rgba(244, 114, 182, 0.45)';     // 边框
+const PINK_SHADOW = '0 18px 48px rgba(244, 114, 182, 0.25)'; // 阴影
 
 const ModelViewer: any = 'model-viewer';
 const ThreeObjMtlViewer = dynamic(
@@ -61,12 +70,16 @@ const TYPE_OPTIONS = [
   { label: 'PDF', value: 'pdf' },
 ] as const;
 
+// 下拉“我的上传”特殊值
+const ORDERING_MY_UPLOADS = '__MY_UPLOADS__';
+
 const ORDERING_OPTIONS = [
   { label: 'Latest', value: '-upload_date' },
   { label: 'Older', value: 'upload_date' },
   { label: 'A~Z', value: 'name' },
   { label: 'Most downloaded', value: '-download_count' },
   { label: 'Most viewed', value: '-view_count' },
+  { label: 'My uploads', value: ORDERING_MY_UPLOADS },
 ] as const;
 
 type Filters = {
@@ -76,6 +89,7 @@ type Filters = {
   date_from?: string;
   date_to?: string;
   tag_ids?: number[];
+  uploaded_by?: number; // 仅显示该用户上传
 };
 
 const getExt = (url: string) => {
@@ -184,7 +198,7 @@ function TagMultiDropdown({
   all,
   selected,
   onChange,
-  onApply, // 自动应用（关闭时触发）
+  onApply,
   disabled,
   buttonLabel = 'Tags',
 }: {
@@ -198,14 +212,13 @@ function TagMultiDropdown({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // 点击外部：关闭并应用
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       if (!ref.current) return;
       if (!ref.current.contains(e.target as Node)) {
         if (open) {
           setOpen(false);
-          onApply(); // ✅ 自动应用
+          onApply(); // 点外自动应用
         }
       }
     };
@@ -226,13 +239,7 @@ function TagMultiDropdown({
 
   return (
     <Box position="relative" ref={ref} minW="280px">
-      <Text
-        fontSize="sm"
-        mb={1}
-        color="white"
-        fontWeight="semibold"
-        letterSpacing="0.2px"
-      >
+      <Text fontSize="sm" mb={1} color="white" fontWeight="semibold" letterSpacing="0.2px">
         Tags
       </Text>
       <Button
@@ -259,9 +266,7 @@ function TagMultiDropdown({
           {buttonLabel}
           {selected.length > 0 ? ` (${selected.length})` : ''}
         </Box>
-        <Box as="span" aria-hidden>
-          ▾
-        </Box>
+        <Box as="span" aria-hidden>▾</Box>
       </Button>
 
       {open && (
@@ -280,9 +285,7 @@ function TagMultiDropdown({
           style={{ backdropFilter: 'blur(10px)' }}
         >
           {all.length === 0 ? (
-            <Text fontSize="sm" color="gray.600">
-              No tags
-            </Text>
+            <Text fontSize="sm" color="gray.600">No tags</Text>
           ) : (
             <VStack align="stretch" gap={2}>
               {all.map((tag) => {
@@ -320,7 +323,6 @@ function TagMultiDropdown({
               })}
             </VStack>
           )}
-          {/* ✅ 无 Done/Reset；点外面自动应用 */}
         </Box>
       )}
 
@@ -330,11 +332,7 @@ function TagMultiDropdown({
           fontSize="sm"
           color="gray.200"
           title={selectedNames.join(', ')}
-          style={{
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
           {selectedNames.join(', ')}
         </Box>
@@ -343,7 +341,7 @@ function TagMultiDropdown({
   );
 }
 
-/* ===== Futuristic Search Bar (clean) ===== */
+/* ===== Futuristic Search Bar ===== */
 function SearchBar({
   value,
   onChange,
@@ -372,16 +370,7 @@ function SearchBar({
         py={2}
         gap={2}
       >
-        <Box
-          as="span"
-          aria-hidden
-          fontSize="lg"
-          lineHeight="1"
-          opacity={0.9}
-          color="white"
-        >
-          🔎
-        </Box>
+        <Box as="span" aria-hidden fontSize="lg" lineHeight="1" opacity={0.9} color="white">🔎</Box>
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -392,9 +381,7 @@ function SearchBar({
           color="white"
           _placeholder={{ color: 'gray.200' }}
           _focusVisible={{ boxShadow: 'none', border: 'none' }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onSubmit();
-          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
         />
         <Button
           onClick={onSubmit}
@@ -481,9 +468,7 @@ function AssetPreviewBox({
           height="100%"
         >
           <VStack gap={1} p={3}>
-            <Text fontSize="lg" fontWeight="bold" color="red.600">
-              PDF
-            </Text>
+            <Text fontSize="lg" fontWeight="bold" color="red.600">PDF</Text>
             <Text
               fontSize="xs"
               color="gray.600"
@@ -544,15 +529,13 @@ function AssetPreviewBox({
         <Text fontSize="xl" fontWeight="bold" color="gray.600">
           {(asset.asset_type || 'unknown').toUpperCase()}
         </Text>
-        <Text fontSize="sm" color="gray.500">
-          Preview not available
-        </Text>
+        <Text fontSize="sm" color="gray.500">Preview not available</Text>
       </VStack>
     </Center>
   );
 }
 
-/* ===== 小组件：对齐用 —— 明细表 & 指标条 ===== */
+/* ===== 小组件：对齐用 ===== */
 function DetailRow({ label, value }: { label: string; value?: React.ReactNode }) {
   return (
     <HStack align="start" gap={3}>
@@ -562,7 +545,7 @@ function DetailRow({ label, value }: { label: string; value?: React.ReactNode })
         </Text>
       </Box>
       <Box flex="1" minW={0}>
-        <Text fontSize="sm" color="gray.800"truncate>
+        <Text fontSize="sm" color="gray.800" truncate>
           {value ?? '—'}
         </Text>
       </Box>
@@ -570,13 +553,7 @@ function DetailRow({ label, value }: { label: string; value?: React.ReactNode })
   );
 }
 
-function MetricsBar({
-  views,
-  downloads,
-}: {
-  views: number;
-  downloads: number;
-}) {
+function MetricsBar({ views, downloads }: { views: number; downloads: number }) {
   return (
     <SimpleGrid columns={2} gap={3} alignItems="center">
       <HStack gap={2}>
@@ -602,10 +579,15 @@ function MetricsBar({
 export default function AssetsPage() {
   const router = useRouter();
 
+  const currentUser = useMemo(() => {
+    try { return authService.getCurrentUser?.() ?? null; } catch { return null; }
+  }, []);
+
   const [assets, setAssets] = useState<AssetType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<number[]>([]);
+  const [deletingIds, setDeletingIds] = useState<number[]>([]);
   const [imageErrors, setImageErrors] = useState<Set<number>>(new Set());
 
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -618,6 +600,7 @@ export default function AssetsPage() {
     date_from: undefined,
     date_to: undefined,
     tag_ids: [],
+    uploaded_by: undefined,
   });
 
   // Pagination
@@ -651,6 +634,10 @@ export default function AssetsPage() {
         ordering: _filters.ordering || undefined,
         date_from: _filters.date_from || undefined,
         date_to: _filters.date_to || undefined,
+        uploaded_by:
+          typeof _filters.uploaded_by === 'number'
+            ? _filters.uploaded_by
+            : undefined,
         tags:
           _filters.tag_ids && _filters.tag_ids.length
             ? _filters.tag_ids.join(',')
@@ -671,7 +658,6 @@ export default function AssetsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // whenever filters change via Apply/Search/Ordering, reset to page 1
   const resetToFirst = () => setCurrentPage(1);
 
   const handleImageError = (assetId: number) => {
@@ -702,6 +688,36 @@ export default function AssetsPage() {
       }
     } finally {
       setDownloadingIds((prev) => prev.filter((id) => id !== asset.id));
+    }
+  };
+
+  // 删除
+  const handleDelete = async (asset: AssetType) => {
+    const canDelete =
+      (String(currentUser?.role || '').toLowerCase() === 'admin') ||
+      permissions.canDeleteAsset(currentUser as any, {
+        id: asset.id,
+        uploaded_by: asset.uploaded_by || null,
+      });
+
+    if (!canDelete) {
+      showToast('Permission denied', 'error', 'You cannot delete this asset');
+      return;
+    }
+
+    const yes = confirm(`Delete "${asset.name || 'asset'}"? This cannot be undone.`);
+    if (!yes) return;
+
+    try {
+      setDeletingIds((s) => [...s, asset.id]);
+      await deleteAsset(asset.id);
+      showToast('Deleted', 'success', 'The asset has been removed');
+      await loadAssets();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Delete failed';
+      showToast('Delete failed', 'error', msg);
+    } finally {
+      setDeletingIds((s) => s.filter((id) => id !== asset.id));
     }
   };
 
@@ -742,6 +758,7 @@ export default function AssetsPage() {
         <Text color="gray.200">
           {assets.length} asset{assets.length !== 1 ? 's' : ''} found
           {filters.search ? ` for "${filters.search}"` : ''}
+          {typeof filters.uploaded_by === 'number' ? ' • showing my uploads' : ''}
         </Text>
       </Box>
 
@@ -759,61 +776,80 @@ export default function AssetsPage() {
     </VStack>
   );
 
-  /* Control bar: Filter left, Ordering right */
+  // 当前是否处于 “我的上传”
+  const myOnly = useMemo(() => {
+    if (!currentUser?.id) return false;
+    return String(filters.uploaded_by ?? '') === String(currentUser.id);
+  }, [filters.uploaded_by, currentUser?.id]);
+
+  const displayedOrderingValue = myOnly ? ORDERING_MY_UPLOADS : filters.ordering;
+
+  /* Control bar */
   const ControlBar = (
     <HStack justify="space-between" align="center" zIndex={1} position="relative">
-      <HStack gap={3}>
-        <Button
-          variant={filterOpen ? 'solid' : 'outline'}
-          color="white"
-          borderRadius="lg"
-          bg={
-            filterOpen
-              ? 'linear-gradient(90deg, rgba(96,165,250,.35), rgba(167,139,250,.35))'
-              : 'transparent'
-          }
-          borderColor="rgba(255,255,255,0.35)"
-          _hover={{
-            bg: 'linear-gradient(90deg, rgba(96,165,250,.45), rgba(167,139,250,.45))',
-            transform: 'translateY(-1px)',
-          }}
-          transition="all .15s ease"
-          onClick={() => setFilterOpen((o) => !o)}
-        >
-          {filterOpen ? 'Filter (open)' : 'Filter'}
-        </Button>
-      </HStack>
+      {/* 左侧：Filter 按钮（粉色卡片） */}
+      <Button
+        variant={filterOpen ? 'solid' : 'outline'}
+        color="white"
+        borderRadius="md"
+        bg={filterOpen ? 'linear-gradient(90deg,#f472b6,#8b5cf6)' : 'transparent'}
+        borderColor="rgba(255,255,255,0.35)"
+        _hover={{
+          bg: 'linear-gradient(90deg,#f472b6,#8b5cf6)',
+          transform: 'translateY(-1px)',
+        }}
+        transition="all .15s ease"
+        onClick={() => setFilterOpen((o) => !o)}
+      >
+        {filterOpen ? 'Filter (open)' : 'Filter'}
+      </Button>
 
+      {/* 右侧：Ordering 下拉（外套粉色描边容器） */}
       <HStack gap={3} minW={{ base: '50%', md: '360px' }}>
         <Box flex="1">
-          <Text
-            fontSize="sm"
-            mb={1}
-            color="white"
-            fontWeight="medium"
-            letterSpacing="0.2px"
-          >
+          <Text fontSize="sm" mb={1} color="white" fontWeight="medium" letterSpacing="0.2px">
             Ordering
           </Text>
           <Box
             borderRadius="12px"
             p="2px"
-            background="linear-gradient(135deg, rgba(59,130,246,0.30), rgba(147,51,234,0.30))"
+            background="linear-gradient(135deg, rgba(244,114,182,.30), rgba(139,92,246,.30))"
             style={{ backdropFilter: 'blur(6px)' }}
           >
             <select
-              value={filters.ordering}
+              value={displayedOrderingValue}
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                const next = { ...filters, ordering: e.target.value };
-                setFilters(next);
-                resetToFirst();
-                loadAssets(next);
+                const val = e.target.value;
+                if (val === ORDERING_MY_UPLOADS) {
+                  const next: Filters = {
+                    ...filters,
+                    ordering: filters.ordering || '-upload_date',
+                    uploaded_by:
+                      typeof currentUser?.id === 'number'
+                        ? currentUser.id
+                        : currentUser?.id
+                        ? Number(currentUser.id)
+                        : undefined,
+                  };
+                  setFilters(next);
+                  resetToFirst();
+                  loadAssets(next);
+                } else {
+                  const patch: Filters = {
+                    ...filters,
+                    ordering: val,
+                    uploaded_by: myOnly ? undefined : filters.uploaded_by,
+                  };
+                  setFilters(patch);
+                  resetToFirst();
+                  loadAssets(patch);
+                }
               }}
               style={{
                 borderRadius: '10px',
                 padding: '10px',
                 width: '100%',
-                background: 'rgba(255,255,255,0.70)',
+                background: 'rgba(255,255,255,0.80)',
                 border: '1px solid rgba(226,232,240,0.90)',
                 color: '#1A202C',
               }}
@@ -830,15 +866,15 @@ export default function AssetsPage() {
     </HStack>
   );
 
-  /* Filter panel */
+  /* Filter panel —— 统一粉色玻璃风格 */
   const FilterPanel = filterOpen ? (
     <Box
       mt={3}
-      border="1px solid rgba(226,232,240,0.90)"
-      borderRadius="20px"
       p={5}
-      bg="rgba(255,255,255,0.70)"
-      boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+      borderRadius="20px"
+      bg={PINK_BG}
+      border={`1px solid ${PINK_BORDER}`}
+      boxShadow={PINK_SHADOW}
       zIndex={1}
       position="relative"
       style={{ backdropFilter: 'blur(10px)' }}
@@ -847,13 +883,7 @@ export default function AssetsPage() {
         <SimpleGrid columns={{ base: 1, md: 3 }} gap={4}>
           {/* Type */}
           <Box>
-            <Text
-              fontSize="sm"
-              mb={1}
-              color="gray.700"
-              fontWeight="semibold"
-              letterSpacing="0.2px"
-            >
+            <Text fontSize="sm" mb={1} color="gray.800" fontWeight="semibold" letterSpacing="0.2px">
               Type
             </Text>
             <select
@@ -868,7 +898,7 @@ export default function AssetsPage() {
                 borderRadius: '12px',
                 padding: '10px',
                 width: '100%',
-                background: 'rgba(255,255,255,0.90)',
+                background: '#fff',
                 border: '1px solid #E2E8F0',
                 color: '#1A202C',
               }}
@@ -883,13 +913,7 @@ export default function AssetsPage() {
 
           {/* Date From */}
           <Box>
-            <Text
-              fontSize="sm"
-              mb={1}
-              color="gray.700"
-              fontWeight="semibold"
-              letterSpacing="0.2px"
-            >
+            <Text fontSize="sm" mb={1} color="gray.800" fontWeight="semibold" letterSpacing="0.2px">
               Date From
             </Text>
             <Input
@@ -903,13 +927,7 @@ export default function AssetsPage() {
 
           {/* Date To */}
           <Box>
-            <Text
-              fontSize="sm"
-              mb={1}
-              color="gray.700"
-              fontWeight="semibold"
-              letterSpacing="0.2px"
-            >
+            <Text fontSize="sm" mb={1} color="gray.800" fontWeight="semibold" letterSpacing="0.2px">
               Date To
             </Text>
             <Input
@@ -922,7 +940,7 @@ export default function AssetsPage() {
           </Box>
         </SimpleGrid>
 
-        {/* Tags — 下拉内无 Done/Reset，外点即应用 */}
+        {/* Tags */}
         <TagMultiDropdown
           all={allTags}
           selected={selectedTagIds}
@@ -954,6 +972,7 @@ export default function AssetsPage() {
                 date_from: undefined,
                 date_to: undefined,
                 tag_ids: [],
+                uploaded_by: undefined,
               };
               setFilters(next);
               resetToFirst();
@@ -962,7 +981,7 @@ export default function AssetsPage() {
           >
             Reset
           </Button>
-          <Button variant="solid" onClick={applyAllFilters} colorScheme="blue" borderRadius="full">
+          <Button variant="solid" onClick={applyAllFilters} colorScheme="pink" borderRadius="full">
             Apply
           </Button>
         </HStack>
@@ -995,7 +1014,7 @@ export default function AssetsPage() {
             key={page}
             size="sm"
             variant={active ? 'solid' : 'outline'}
-            colorScheme={active ? 'blue' : undefined}
+            colorScheme={active ? 'pink' : undefined}
             onClick={() => setCurrentPage(page)}
           >
             {page}
@@ -1021,12 +1040,8 @@ export default function AssetsPage() {
           <Center minH="400px">
             <VStack gap={4}>
               <Spinner size="xl" color="white" />
-              <Text fontSize="lg" color="gray.200">
-                Loading assets...
-              </Text>
-              <Text fontSize="sm" color="gray.400">
-                Please wait while we fetch your assets
-              </Text>
+              <Text fontSize="lg" color="gray.200">Loading assets...</Text>
+              <Text fontSize="sm" color="gray.400">Please wait while we fetch your assets</Text>
             </VStack>
           </Center>
         </Container>
@@ -1040,21 +1055,18 @@ export default function AssetsPage() {
         {Background}
         <Container maxW="container.xl" py={8} zIndex={1} position="relative">
           <Box
-            bg="rgba(255,255,255,0.70)"
-            border="1px solid rgba(252,165,165,0.9)"
-            borderRadius="md"
+            bg={PINK_BG}
+            border={`1px solid ${PINK_BORDER}`}
+            borderRadius="20px"
             p={4}
             mb={4}
             style={{ backdropFilter: 'blur(8px)' }}
+            boxShadow={PINK_SHADOW}
           >
-            <Text fontWeight="bold" color="red.700">
-              Unable to Load Assets
-            </Text>
-            <Text color="red.600">{error}</Text>
+            <Text fontWeight="bold" color="#7F1D1D">Unable to Load Assets</Text>
+            <Text color="#991B1B">{error}</Text>
           </Box>
-          <Button onClick={() => loadAssets()} colorScheme="blue">
-            Try Again
-          </Button>
+          <Button onClick={() => loadAssets()} colorScheme="pink">Try Again</Button>
         </Container>
       </Box>
     );
@@ -1071,21 +1083,35 @@ export default function AssetsPage() {
           {FilterPanel}
 
           {pageAssets.length === 0 ? (
-            <Center height="200px" bg="whiteAlpha.100" borderRadius="md">
+            <Box
+              p={8}
+              borderRadius="20px"
+              bg={PINK_BG}
+              border={`1px solid ${PINK_BORDER}`}
+              boxShadow={PINK_SHADOW}
+              textAlign="center"
+              style={{ backdropFilter: 'blur(10px)' }}
+            >
               <VStack gap={3}>
-                <Text fontSize="lg" color="gray.200" fontWeight="medium">
+                <Text fontSize="lg" color="#1A202C" fontWeight="medium">
                   No assets available
                 </Text>
-                <Text fontSize="sm" color="gray.400">
-                  Try adjusting filters
-                </Text>
+                <Text fontSize="sm" color="#334155">Try adjusting filters</Text>
               </VStack>
-            </Center>
+            </Box>
           ) : (
             <>
               <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} gap={6}>
-                {pageAssets.map((asset) => {
+                {pageAssets.map((asset, idx) => {
                   const fileUrl = toUrl((asset as any).file_url || asset.file);
+
+                  // 是否可删：Admin 可删所有；Editor 仅能删自己；Viewer 不可删
+                  const canDelete =
+                    (String(currentUser?.role || '').toLowerCase() === 'admin') ||
+                    permissions.canDeleteAsset(currentUser as any, {
+                      id: asset.id,
+                      uploaded_by: asset.uploaded_by || null,
+                    });
 
                   return (
                     <Box
@@ -1093,12 +1119,12 @@ export default function AssetsPage() {
                       borderRadius="20px"
                       p={0}
                       overflow="hidden"
-                      background="rgba(255,255,255,0.60)"   /* 60% 透明 */
-                      border="1px solid rgba(226,232,240,0.90)"
-                      boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+                      bg={idx % 2 === 0 ? PINK_BG_ALT : PINK_BG}
+                      border={`1px solid ${PINK_BORDER}`}
+                      boxShadow={PINK_SHADOW}
                       style={{ backdropFilter: 'blur(8px)' }}
                       _hover={{
-                        boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+                        boxShadow: '0 24px 80px rgba(244,114,182,0.35)',
                         transform: 'translateY(-3px)',
                       }}
                       transition="all .2s ease"
@@ -1148,11 +1174,11 @@ export default function AssetsPage() {
                         </HStack>
 
                         {/* 描述 */}
-                        <Text fontSize="sm" color="gray.700" lineHeight="1.5" lineClamp={2}>
+                        <Text fontSize="sm" color="gray.700" lineHeight="1.5" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                           {(asset as any).description || 'No description'}
                         </Text>
 
-                        {/* 资料明细（严格对齐） */}
+                        {/* 明细 */}
                         <VStack align="stretch" gap={1}>
                           <DetailRow label="Brand:" value={(asset as any).brand ?? '—'} />
                           <DetailRow label="By:" value={asset.uploaded_by?.username ?? 'Unknown'} />
@@ -1167,7 +1193,7 @@ export default function AssetsPage() {
                           <DetailRow label="ID:" value={(asset as any).asset_no ?? asset.id} />
                         </VStack>
 
-                        {/* Views / Downloads（对齐：标签左、数字右） */}
+                        {/* 指标 */}
                         <MetricsBar
                           views={(asset as any).view_count ?? 0}
                           downloads={(asset as any).download_count ?? 0}
@@ -1196,17 +1222,11 @@ export default function AssetsPage() {
                             variant="outline"
                             flex={1}
                             onClick={() => {
-                              const url = new URL(
-                                '/dashboard/preview',
-                                window.location.origin
-                              );
+                              const url = new URL('/dashboard/preview', window.location.origin);
                               url.searchParams.set('id', String(asset.id));
                               url.searchParams.set('file', fileUrl);
                               if ((asset as any).asset_type)
-                                url.searchParams.set(
-                                  'type',
-                                  (asset as any).asset_type
-                                );
+                                url.searchParams.set('type', (asset as any).asset_type);
                               router.push(url.toString());
                             }}
                             _hover={{ transform: 'translateY(-1px)' }}
@@ -1214,19 +1234,33 @@ export default function AssetsPage() {
                           >
                             Preview
                           </Button>
+
                           <Button
                             size="sm"
-                            colorScheme="green"
+                            colorScheme="pink"
+                            variant="solid"
                             flex={1}
                             onClick={() => handleDownload(asset)}
-                            loading={downloadingIds.includes(asset.id)}
+                            disabled={downloadingIds.includes(asset.id)}
                             _hover={{ transform: 'translateY(-1px)' }}
                             transition="all .15s ease"
                           >
-                            {downloadingIds.includes(asset.id)
-                              ? 'Downloading...'
-                              : 'Download'}
+                            {downloadingIds.includes(asset.id) ? 'Downloading…' : 'Download'}
                           </Button>
+
+                          {canDelete && (
+                            <Button
+                              size="sm"
+                              colorScheme="red"
+                              variant="solid"
+                              onClick={() => handleDelete(asset)}
+                              disabled={deletingIds.includes(asset.id)}
+                              _hover={{ transform: 'translateY(-1px)' }}
+                              transition="all .15s ease"
+                            >
+                              {deletingIds.includes(asset.id) ? 'Deleting…' : 'Delete'}
+                            </Button>
+                          )}
                         </HStack>
                       </VStack>
                     </Box>

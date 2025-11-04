@@ -2,7 +2,9 @@
 
 import VersionHistory from '@/components/VersionHistory';
 import { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Flex, Input, Text, Badge, SimpleGrid, Grid, GridItem } from '@chakra-ui/react';
+import {
+  Box, Button, Flex, Input, Text, Badge, SimpleGrid, Grid, GridItem,
+} from '@chakra-ui/react';
 import dynamic from 'next/dynamic';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
@@ -20,22 +22,23 @@ import {
 import { authService } from '@/services/auth';
 import { BASE_URL } from '@/lib/api';
 
+// ========== 主题常量（与 Users/Tags 页一致的粉色玻璃拟态） ==========
+const PINK_BG      = 'rgba(253, 242, 248, 0.80)';   // 背景
+const PINK_BG_ALT  = 'rgba(253, 242, 248, 0.92)';   // 行条纹
+const PINK_BORDER  = 'rgba(244, 114, 182, 0.45)';   // 边框
+const PINK_SHADOW  = '0 18px 48px rgba(244, 114, 182, 0.25)';
+
 // 3D 预览
 const ThreeDPreview = dynamic(() => import('@/components/ThreeDPreview'), { ssr: false });
 
-/** 霓虹按钮（无 sx；点击前后文字颜色不变；默认透明底） */
+/** 霓虹按钮（白字、透明底、渐变描边） */
 function NeonButton(props: React.ComponentProps<typeof Button>) {
-  const {
-    color,          // 允许传白字等
-    variant,        // 允许 ghost/solid 等
-    ...rest
-  } = props;
-
+  const { color, variant, ...rest } = props;
   return (
     <Button
       {...rest}
       variant={variant ?? 'ghost'}
-      color={color}
+      color={color ?? 'white'}
       bg="transparent"
       borderRadius="md"
       position="relative"
@@ -45,7 +48,7 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
         inset: 0,
         borderRadius: 'inherit',
         padding: '1px',
-        background: 'linear-gradient(90deg,#60a5fa,#a78bfa)',
+        background: 'linear-gradient(90deg,#f472b6,#8b5cf6)', // 与用户页一致：粉→紫
         WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         WebkitMaskComposite: 'xor',
         maskComposite: 'exclude',
@@ -53,21 +56,16 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
       }}
       _hover={{
         transform: 'translateY(-1px)',
-        boxShadow: '0 12px 28px rgba(59,130,246,0.25)',
-        color: 'inherit',
+        boxShadow: '0 12px 28px rgba(244, 114, 182, 0.25)',
       }}
-      _active={{
-        transform: 'translateY(0)',
-        color: 'inherit',
-      }}
-      _focusVisible={{
-        boxShadow: '0 0 0 0 rgba(0,0,0,0)',
-      }}
+      _active={{ transform: 'translateY(0)' }}
+      _focusVisible={{ boxShadow: 'none' }}
       transition="all .15s ease"
     />
   );
 }
 
+/** 工具函数 */
 function ensureAbsolute(u?: string): string {
   if (!u) return '';
   if (u.startsWith('http://') || u.startsWith('https://')) return u;
@@ -99,27 +97,19 @@ function ext(url?: string): string {
 }
 type TabKey = 'history' | 'upload';
 
-/** 资料行：左标签右值，自动换行，视觉对齐 */
 /** 资料行：左标签右值，避免 p 嵌套 p */
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Grid templateColumns="120px 1fr" columnGap={3} alignItems="center">
       <GridItem>
-        {/* 左侧标签可以继续用 Text（单纯文字） */}
-        <Text color="gray.600" fontWeight="semibold">
-          {label}
-        </Text>
+        <Text color="gray.700" fontWeight="semibold">{label}</Text>
       </GridItem>
       <GridItem>
-        {/* 右侧内容用 Box（div），避免把 block/其它 <Text> 包进 <p> 里 */}
-        <Box color="gray.800">
-          {children}
-        </Box>
+        <Box color="#1A202C">{children}</Box>
       </GridItem>
     </Grid>
   );
 }
-
 
 export default function PreviewPage() {
   const router = useRouter();
@@ -159,11 +149,9 @@ export default function PreviewPage() {
       setLoadingPreview(true);
       setFatalPreviewErr('');
       try {
-        // 进入预览计次（services 内部已 sessionStorage 防抖）
         trackView(assetId)
           .then(() => setAsset(prev => (prev ? { ...prev, view_count: (prev.view_count ?? 0) + 1 } : prev)))
           .catch(() => {});
-
         let url = '';
         try { url = ensureAbsolute(await getPreviewUrl(assetId)); }
         catch { const a = await getAssetById(assetId); url = ensureAbsolute(a?.file_url); }
@@ -273,21 +261,15 @@ export default function PreviewPage() {
     <Box p="24px" color="white">
       {/* 顶部条 */}
       <Flex align="center" gap="12px" mb="16px">
-        {/* ← Back 白色且点击前后颜色一致 */}
-        <NeonButton onClick={() => router.back()} color="white">
-          ← Back
-        </NeonButton>
-
+        <NeonButton onClick={() => router.back()}>← Back</NeonButton>
         <Text fontSize="20px" fontWeight="bold" color="white">Asset Preview</Text>
         <div style={{ flex: 1 }} />
-
-        {/* Download 白字 */}
-        <NeonButton onClick={onDownloadCurrent} disabled={downloading || !assetId} color="white">
+        <NeonButton onClick={onDownloadCurrent} disabled={downloading || !assetId}>
           {downloading ? 'Downloading...' : 'Download Current'}
         </NeonButton>
       </Flex>
 
-      {/* 错误提示 */}
+      {/* 错误提示（保持红色条） */}
       {fatalPreviewErr && !fileUrl && (
         <Box
           mt="12px"
@@ -303,19 +285,19 @@ export default function PreviewPage() {
         </Box>
       )}
 
-      {/* 信息 + 预览（70% 半透明玻璃） */}
+      {/* 信息 + 预览 —— 粉色玻璃卡片 */}
       <Box
-        border="1px solid rgba(226,232,240,0.90)"
+        border={`1px solid ${PINK_BORDER}`}
         borderRadius="20px"
         p="16px"
         mb="24px"
-        bg="rgba(255,255,255,0.70)"
-        boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+        bg={PINK_BG}
+        boxShadow={PINK_SHADOW}
         style={{ backdropFilter: 'blur(10px)' }}
         color="gray.900"
       >
         <Flex align="flex-start" gap="20px" wrap="wrap">
-          {/* 左侧资料：两列对齐，更整齐 */}
+          {/* 左侧资料 */}
           <Box minW="320px" flex="0 0 360px">
             <SimpleGrid columns={1} gap={3}>
               <DetailRow label="Name:">{asset?.name ?? '-'}</DetailRow>
@@ -331,26 +313,26 @@ export default function PreviewPage() {
                 <Flex wrap="wrap" gap="6px">
                   {asset?.tags?.length
                     ? asset.tags.map((t) => <Badge key={t.id} variant="outline">{t.name}</Badge>)
-                    : <Text color="gray.500">None</Text>}
+                    : <Text color="gray.600">None</Text>}
                 </Flex>
               </DetailRow>
             </SimpleGrid>
           </Box>
 
-          {/* 右侧预览 */}
+          {/* 右侧预览区（与卡片同风格） */}
           <Box
             flex="1"
             minWidth="360px"
             minHeight="480px"
-            border="1px dashed rgba(148,163,184,0.9)"
+            border={`1px dashed ${PINK_BORDER}`}
             p="12px"
             borderRadius="16px"
-            bg="rgba(255,255,255,0.70)"
+            bg={PINK_BG_ALT}
             style={{ backdropFilter: 'blur(8px)' }}
           >
             {loadingPreview && <Box color="gray.700">Loading preview…</Box>}
 
-            {!loadingPreview && fileUrl && inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type) === 'image' && (
+            {!loadingPreview && fileUrl && kind === 'image' && (
               <img
                 src={fileUrl}
                 alt={asset?.name || 'image'}
@@ -358,11 +340,11 @@ export default function PreviewPage() {
               />
             )}
 
-            {!loadingPreview && fileUrl && inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type) === 'video' && (
+            {!loadingPreview && fileUrl && kind === 'video' && (
               <video src={fileUrl} controls style={{ maxHeight: 560, width: '100%', borderRadius: 12 }} />
             )}
 
-            {!loadingPreview && inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type) === 'pdf' && (
+            {!loadingPreview && kind === 'pdf' && (
               <Box>
                 <Flex gap="8px" mb="8px">
                   <NeonButton onClick={openPdfNewTab}>Open in new tab</NeonButton>
@@ -384,7 +366,7 @@ export default function PreviewPage() {
               </Box>
             )}
 
-            {!loadingPreview && fileUrl && inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type) === '3d' && (ext(fileUrl) === 'glb' || ext(fileUrl) === 'gltf') && (
+            {!loadingPreview && fileUrl && kind === '3d' && (ext(fileUrl) === 'glb' || ext(fileUrl) === 'gltf') && (
               <div style={{ height: 560, width: '100%' }}>
                 <ThreeDPreview fileUrl={fileUrl} />
               </div>
@@ -395,27 +377,22 @@ export default function PreviewPage() {
         </Flex>
       </Box>
 
-      {/* Tabs：白字，点击前后颜色一致 */}
+      {/* Tabs（白字按钮） */}
       <Flex gap="8px" mb="12px">
-        <NeonButton color="white" onClick={() => setActiveTab('history')}>
-          Version History
-        </NeonButton>
-        {canWrite && (
-          <NeonButton color="white" onClick={() => setActiveTab('upload')}>
-            Upload New Version
-          </NeonButton>
-        )}
+        <NeonButton onClick={() => setActiveTab('history')}>Version History</NeonButton>
+        {canWrite && <NeonButton onClick={() => setActiveTab('upload')}>Upload New Version</NeonButton>}
       </Flex>
 
+      {/* 历史版本表 —— 粉色玻璃表格，深色表头，条纹行 */}
       {activeTab === 'history' && (
         <Box
-          border="1px solid rgba(226,232,240,0.90)"
+          border={`1px solid ${PINK_BORDER}`}
           borderRadius="20px"
           overflow="hidden"
-          bg="rgba(255,255,255,0.70)"
-          boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+          bg={PINK_BG}
+          boxShadow={PINK_SHADOW}
           style={{ backdropFilter: 'blur(10px)' }}
-          color="gray.900"
+          color="#1A202C"
         >
           <Flex align="center" gap="12px" p="12px">
             <NeonButton onClick={refreshVersions} disabled={loadingList}>
@@ -441,8 +418,14 @@ export default function PreviewPage() {
                   <td colSpan={5} style={{ padding: 10, color: '#64748b' }}>No versions yet.</td>
                 </tr>
               )}
-              {versions.map((v) => (
-                <tr key={v.id} style={{ borderTop: '1px solid #E2E8F0' }}>
+              {versions.map((v, i) => (
+                <tr
+                  key={v.id}
+                  style={{
+                    borderTop: `1px solid ${PINK_BORDER}`,
+                    background: i % 2 === 0 ? PINK_BG_ALT : PINK_BG,
+                  }}
+                >
                   <td style={{ padding: 10 }}>v{v.version}</td>
                   <td style={{ padding: 10 }}>{v.created_at}</td>
                   <td style={{ padding: 10 }}>{v.uploaded_by?.username ?? '-'}</td>
@@ -474,24 +457,30 @@ export default function PreviewPage() {
         </Box>
       )}
 
+      {/* 上传新版本 —— 粉色卡片 */}
       {activeTab === 'upload' && canWrite && (
         <Box
-          border="1px solid rgba(226,232,240,0.90)"
+          border={`1px solid ${PINK_BORDER}`}
           borderRadius="20px"
           p="16px"
           maxW="560px"
-          bg="rgba(255,255,255,0.70)"
-          boxShadow="0 20px 60px rgba(0,0,0,0.20)"
+          bg={PINK_BG}
+          boxShadow={PINK_SHADOW}
           style={{ backdropFilter: 'blur(10px)' }}
-          color="gray.900"
+          color="#1A202C"
         >
           <Box mb="12px">
             <Text mb="6px" color="gray.800">Select file</Text>
-            <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} bg="white" />
           </Box>
           <Box mb="12px">
             <Text mb="6px" color="gray.800">Note (optional)</Text>
-            <Input placeholder="e.g. fix color correction" value={note} onChange={(e) => setNote(e.target.value)} />
+            <Input
+              placeholder="e.g. fix color correction"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              bg="white"
+            />
           </Box>
           <Flex gap="8px">
             <NeonButton onClick={onUploadNewVersion} disabled={!file || uploading}>

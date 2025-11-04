@@ -1,3 +1,4 @@
+/* FULL FILE: src/app/dashboard/layout.tsx */
 'use client';
 
 import { useEffect, useMemo } from 'react';
@@ -16,7 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 type Role = 'admin' | 'editor' | 'viewer';
 type MenuItem = { name: string; path: string; roles: Role[]; strict?: boolean };
 
-/** 霓虹按钮：文字固定白色，仅背景/描边在激活或悬停时变化 */
+/** 霓虹按钮（侧边栏导航）：文字固定白色，激活/悬停有描边与背景变化 */
 function NeonButton(
   props: React.ComponentProps<typeof Button> & { active?: boolean }
 ) {
@@ -24,9 +25,11 @@ function NeonButton(
   return (
     <Button
       {...rest}
-      color="white"                 /* ← 文字常驻白色 */
+      color="white"
       borderRadius="md"
       bg={active ? 'rgba(59,130,246,0.20)' : 'transparent'}
+      justifyContent="start"
+      position="relative"
       _hover={{
         bg: active ? 'rgba(59,130,246,0.28)' : 'rgba(148,163,184,0.15)',
         transform: 'translateX(2px)',
@@ -35,7 +38,6 @@ function NeonButton(
           : '0 10px 24px rgba(0,0,0,0.06)',
       }}
       _active={{ bg: 'rgba(59,130,246,0.32)' }}
-      position="relative"
       _before={{
         content: '""',
         position: 'absolute',
@@ -46,6 +48,8 @@ function NeonButton(
           ? 'linear-gradient(90deg,#60a5fa,#a78bfa)'
           : 'linear-gradient(90deg,#94a3b8,#cbd5e1)',
         WebkitMask:
+          'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+        mask:
           'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         WebkitMaskComposite: 'xor',
         maskComposite: 'exclude',
@@ -61,9 +65,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const pathname = usePathname();
 
-  useEffect(() => { if (!loading && !user) router.replace('/login'); }, [loading, user, router]);
+  useEffect(() => {
+    if (!loading && !user) router.replace('/login');
+  }, [loading, user, router]);
 
-  const handleLogout = async () => { await logout(); router.replace('/login'); };
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/login');
+  };
 
   const menuItems: MenuItem[] = useMemo(() => {
     const role = (user?.role ?? 'viewer') as Role;
@@ -72,8 +81,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       { name: 'Assets', path: '/dashboard/assets', roles: ['admin','editor','viewer'] },
       { name: 'My Profile', path: '/dashboard/profile', roles: ['admin','editor','viewer'] },
     ];
-    if (role === 'editor') base.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
-    if (role === 'admin') base.splice(1, 0, { name: 'User Management', path: '/dashboard/users', roles: ['admin'] });
+    if (role === 'editor') {
+      base.splice(2, 0, { name: 'Upload', path: '/dashboard/upload', roles: ['editor'] });
+    }
+    if (role === 'admin') {
+      base.splice(1, 0, { name: 'Admin (Users & Tags)', path: '/dashboard/users', roles: ['admin'] });
+    }
     return base.filter(it => it.roles.includes(role));
   }, [user?.role]);
 
@@ -82,15 +95,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (loading) {
     return (
-      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
-        <HStack gap={3}><Spinner /><Text>Checking session...</Text></HStack>
+      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="#0b0f2b">
+        <HStack gap={3}><Spinner color="white" /><Text color="white">Checking session...</Text></HStack>
       </Box>
     );
   }
   if (!user) {
     return (
-      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
-        <Text>Redirecting to login...</Text>
+      <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="#0b0f2b">
+        <Text color="white">Redirecting to login...</Text>
       </Box>
     );
   }
@@ -103,7 +116,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <Box minH="100vh" position="relative">
-      {/* 背景：赛博深蓝紫（不拦截点击） */}
+      {/* 背景 */}
       <Box
         position="fixed" inset="0" zIndex={0} pointerEvents="none"
         background="
@@ -128,7 +141,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </Box>
 
       <HStack align="start" gap={0} position="relative" zIndex={1}>
-        {/* 侧边栏：深色半透明 + 玻璃拟态；文字全白 */}
+        {/* 侧边栏 */}
         <Box
           as="nav"
           w={{ base: '220px', md: '250px' }}
@@ -142,38 +155,70 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           style={{ backdropFilter: 'blur(8px)' }}
         >
           <VStack align="stretch" gap={6}>
-            <Box>
-              <Heading size="md" mb={1} color="white" letterSpacing="0.3px">DAM System</Heading>
-              <Text fontSize="sm" color="gray.200" mb={1}>Welcome, {user.first_name || user.username}</Text>
+            {/* 顶部信息（玻璃卡） */}
+            <Box
+              p={4}
+              border="1px solid rgba(226,232,240,0.90)"
+              borderRadius="16px"
+              bg="rgba(255,255,255,0.10)"
+              style={{ backdropFilter: 'blur(10px)' }}
+            >
+              <Heading size="md" mb={1} color="white" letterSpacing="0.3px">
+                DAM System
+              </Heading>
+              <Text fontSize="sm" color="gray.200" mb={1}>
+                Welcome, {user.first_name || user.username}
+              </Text>
               <Text fontSize="xs" color={roleColor(user.role as Role)} fontWeight="bold" mb={1}>
                 Role: {(user.role || '').toUpperCase()}
               </Text>
               <Text fontSize="xs" color="gray.300">{roleDesc(user.role as Role)}</Text>
             </Box>
 
+            {/* 分隔线：用 Box 代替 Divider */}
+            <Box
+              h="1px"
+              w="100%"
+              bg="rgba(226,232,240,0.24)"
+              borderRadius="full"
+            />
+
+            {/* 导航菜单 */}
             <VStack align="stretch" gap={2}>
               {menuItems.map((item) => {
                 const active = isActive(item);
                 return (
-                  <NeonButton
-                    key={item.path}
-                    active={active}
-                    variant={active ? 'solid' : 'ghost'}
-                    justifyContent="start"
-                    size="sm"
-                    fontWeight={active ? 'bold' : 'normal'}
-                    onClick={() => router.push(item.path)}
-                  >
-                    {item.name}
-                  </NeonButton>
+                  <Box key={item.path} position="relative">
+                    {active && (
+                      <Box
+                        position="absolute"
+                        left="-8px"
+                        top="10%"
+                        bottom="10%"
+                        w="3px"
+                        bg="linear-gradient(180deg,#60a5fa,#a78bfa)"
+                        borderRadius="full"
+                      />
+                    )}
+                    <NeonButton
+                      active={active}
+                      variant={active ? 'solid' : 'ghost'}
+                      size="sm"
+                      fontWeight={active ? 'bold' : 'normal'}
+                      aria-current={active ? 'page' : undefined}
+                      onClick={() => router.push(item.path)}
+                    >
+                      {item.name}
+                    </NeonButton>
+                  </Box>
                 );
               })}
               <NeonButton
                 variant="ghost"
-                justifyContent="start"
                 onClick={handleLogout}
                 mt={4}
                 size="sm"
+                title="Log out"
               >
                 Log Out
               </NeonButton>
