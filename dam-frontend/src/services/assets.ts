@@ -1,5 +1,6 @@
 // src/services/assets.ts
-// 统一导出 & 兼容旧字段/旧函数名；使用 apiRequest（JWT 自动注入）；路径统一带尾斜杠
+// Unified exports & type compatibility. Uses apiRequest (JWT auto-injected).
+// Collection endpoints include a trailing slash by default.
 
 import { apiRequest, BASE_URL } from '@/lib/api';
 
@@ -23,10 +24,10 @@ export type AssetItem = {
   asset_no?: string | number;
   description?: string;
 
-  // 后端真实字段
+  // Backend canonical field
   asset_type?: 'image' | 'video' | '3d_model' | 'pdf' | 'document' | string;
 
-  // 兼容旧页面字段
+  // Legacy/compat alias used by some pages
   type?: string;
 
   file?: string;
@@ -36,8 +37,8 @@ export type AssetItem = {
 
   tags: Tag[];
 
-  upload_date?: string; // 后端真实字段
-  created_at?: string; // 兼容旧字段
+  upload_date?: string; // canonical
+  created_at?: string;  // legacy compat
   updated_at?: string;
 
   download_count?: number;
@@ -45,7 +46,7 @@ export type AssetItem = {
   uploaded_by?: MiniUser;
 };
 
-// 兼容：有页面 import { Asset }
+// Alias used elsewhere
 export type Asset = AssetItem;
 
 export type AssetVersion = {
@@ -56,7 +57,7 @@ export type AssetVersion = {
   created_at: string;
   uploaded_by?: MiniUser;
   note?: string;
-  uploaded_at?: string; // 兼容旧代码
+  uploaded_at?: string; // legacy compat
 };
 
 export type GetAssetsParams = {
@@ -80,9 +81,9 @@ export type GetAssetsParams = {
 // -------------------- Helpers --------------------
 
 /**
- * 构造查询字符串：
- * - 默认 tags_mode = 'OR' -> ?tags=1,2,3
- * - tags_mode = 'AND'    -> ?tags=1&tags=2&tags=3
+ * Build query string
+ * - Default tags_mode = 'OR' -> ?tags=1,2,3
+ * - tags_mode = 'AND'       -> ?tags=1&tags=2&tags=3
  */
 function buildQuery(params?: GetAssetsParams): string {
   if (!params) return '';
@@ -116,7 +117,7 @@ function buildQuery(params?: GetAssetsParams): string {
         // ?tags=1&tags=2&tags=3
         ids.forEach((v) => q.append('tags', v));
       } else {
-        // 默认 OR：?tags=1,2,3
+        // Default OR: ?tags=1,2,3
         q.set('tags', ids.join(','));
       }
     }
@@ -143,9 +144,9 @@ function mapVersion(v: any): AssetVersion {
 // -------------------- Assets API --------------------
 
 export async function getAssets(params?: GetAssetsParams): Promise<AssetItem[]> {
-  const url = `/api/assets/${buildQuery(params)}`; // 列表必须带尾斜杠
+  const url = `/api/assets/${buildQuery(params)}`; // list endpoint with trailing slash
   const data = await apiRequest<any>(url);
-  // 兼容数组或分页
+  // Accept array or paginated { results }
   const arr = Array.isArray(data) ? data : data?.results ?? [];
   return arr as AssetItem[];
 }
@@ -163,16 +164,16 @@ export async function getAssetById(id: number | string): Promise<AssetItem> {
   return data;
 }
 
-// 创建（multipart）
+// Create (multipart)
 export async function createAsset(form: FormData): Promise<AssetItem> {
-  // apiRequest 会自动识别 FormData，不要手动设 Content-Type
+  // apiRequest auto-detects FormData; don't set Content-Type manually
   return await apiRequest<AssetItem>('/api/assets/', {
     method: 'POST',
     body: form,
   });
 }
 
-// 更新（PATCH）
+// Update (PATCH)
 export async function updateAsset(
   id: number | string,
   data: FormData | Record<string, unknown>
@@ -183,12 +184,13 @@ export async function updateAsset(
   });
 }
 
-// 删除
+// Delete
 export async function deleteAsset(id: number | string): Promise<void> {
   await apiRequest<void>(`/api/assets/${id}/`, { method: 'DELETE' });
 }
 
-// ★ 预览直链（用于 img/video/object 的 src）——优先 /preview/，失败回退 detail
+// Preferred preview URL for embedding img/video/object.
+// First try /preview/, fallback to asset detail URL fields.
 export async function getPreviewUrl(id: number | string): Promise<string> {
   try {
     const data = await apiRequest<{ file_url: string }>(`/api/assets/${id}/preview/`);
@@ -200,48 +202,137 @@ export async function getPreviewUrl(id: number | string): Promise<string> {
   return detail?.file_url || detail?.file || '';
 }
 
-// ★ 仅当用户点击“下载”时调用（这里才会 +1）
-// Blob 下载需要 fetch（apiRequest 是 JSON 解析），所以这里保留低层 fetch
+// -------------------- Download (minimal logic, more robust) --------------------
+
+// Read token from storage/cookie without changing your login flow
+function readTokenFromStorage(): string | null {
+  try {
+    const keys = [
+      'Authorization', // may already be 'Bearer xxx' or 'JWT xxx'
+      'token',
+      'access_token',
+      'access',
+      'accessToken',
+      'jwt',
+    ];
+    for (const k of keys) {
+      const v =
+        localStorage.getItem(k) ??
+        (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(k) : null);
+      if (v && v.trim()) return v.trim();
+    }
+  } catch {}
+  return null;
+}
+
+function readTokenFromCookie(): string | null {
+  try {
+    const jar = (typeof document !== 'undefined' ? document.cookie : '') || '';
+    if (!jar) return null;
+    const pick = (name: string) => {
+      const m = jar.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
+      return m ? decodeURIComponent(m[1]) : null;
+    };
+    return (
+      pick('Authorization') ||
+      pick('token') ||
+      pick('access_token') ||
+      pick('access') ||
+      pick('jwt') ||
+      null
+    );
+  } catch {}
+  return null;
+}
+
+/** Raw authorization value from storage/cookie (may already contain Bearer/JWT) */
+function getRawAuthToken(): string | null {
+  return readTokenFromStorage() ?? readTokenFromCookie();
+}
+
+function buildAuthHeader(prefix: 'Bearer' | 'JWT' | 'raw'): HeadersInit {
+  const raw = getRawAuthToken();
+  if (!raw) return {};
+  // If it already looks like 'Bearer xxx' or 'JWT xxx', use as-is
+  if (/^\s*(Bearer|JWT)\s+.+/i.test(raw)) {
+    return { Authorization: raw };
+  }
+  // Else attach prefix or use raw value directly
+  if (prefix === 'raw') {
+    return { Authorization: raw };
+  }
+  return { Authorization: `${prefix} ${raw}` };
+}
+
+/**
+ * Fetch helper with auth fallbacks:
+ * 1) Bearer
+ * 2) JWT
+ * 3) raw value
+ * 4) If 401 and URL ends with '/', retry without trailing slash
+ */
+async function fetchWithAuthFallback(url: string, init?: RequestInit): Promise<Response> {
+  const tryOnce = (h: HeadersInit, u = url) =>
+    fetch(u, {
+      method: 'GET',
+      credentials: 'include',
+      ...init,
+      headers: { ...(init?.headers || {}), ...h } as HeadersInit,
+    });
+
+  // 1) Bearer
+  let res = await tryOnce(buildAuthHeader('Bearer'));
+  if (res.status === 401) {
+    // 2) JWT
+    res = await tryOnce(buildAuthHeader('JWT'));
+  }
+  if (res.status === 401) {
+    // 3) raw
+    res = await tryOnce(buildAuthHeader('raw'));
+  }
+  // 4) Trailing slash fallback
+  if (res.status === 401 && /\/$/.test(url)) {
+    const urlNoSlash = url.replace(/\/+$/, '');
+    res = await tryOnce(buildAuthHeader('Bearer'), urlNoSlash);
+    if (res.status === 401) res = await tryOnce(buildAuthHeader('JWT'), urlNoSlash);
+    if (res.status === 401) res = await tryOnce(buildAuthHeader('raw'), urlNoSlash);
+  }
+  return res;
+}
+
 export async function downloadAsset(id: number | string): Promise<Blob> {
-  const res = await fetch(`${BASE_URL}/api/assets/${id}/download/`, {
-    method: 'GET',
-    headers: {
-      // JWT 由后端在下载视图中校验；若需要，也可在此加上 Authorization
-      // 但多数情况下下载是公开资源或凭 session，这里保留简单版
-    } as HeadersInit,
-  });
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const url = `${BASE_URL}/api/assets/${id}/download/`;
+  const res = await fetchWithAuthFallback(url);
+  if (!res.ok) {
+    let detail = '';
+    try { detail = await res.text(); } catch {}
+    throw new Error(`Download failed (${res.status}) ${detail}`.trim());
+  }
   return await res.blob();
 }
 
-// 更稳的下载：解析响应头拿“真实文件名”
 export async function downloadAssetBlob(
   id: number | string
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${BASE_URL}/api/assets/${id}/download/`, {
-    method: 'GET',
-    headers: {} as HeadersInit,
-  });
+  const url = `${BASE_URL}/api/assets/${id}/download/`;
+  const res = await fetchWithAuthFallback(url);
 
   const blob = await res.blob();
 
   if (!res.ok) {
     let t = '';
-    try {
-      t = await blob.text();
-    } catch {}
-    throw new Error(`Download failed (${res.status}) ${t}`);
+    try { t = await blob.text(); } catch {}
+    throw new Error(`Download failed (${res.status}) ${t}`.trim());
   }
 
+  // Parse filename from Content-Disposition, if present
   const cd = res.headers.get('content-disposition') || '';
   let filename = 'download';
-  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^"]+)"?/i.exec(cd);
+  const m =
+    /filename\*=UTF-8''([^;]+)/i.exec(cd) ||
+    /filename="?([^"]+)"?/i.exec(cd);
   if (m && m[1]) {
-    try {
-      filename = decodeURIComponent(m[1]);
-    } catch {
-      filename = m[1];
-    }
+    try { filename = decodeURIComponent(m[1]); } catch { filename = m[1]; }
   }
   return { blob, filename };
 }
@@ -249,14 +340,14 @@ export async function downloadAssetBlob(
 // -------------------- View Count --------------------
 
 /**
- * 进入预览页后调用：
- * - 由后端（按 user/IP + TTL）决定是否 +1
+ * Call on entering preview page.
+ * Server decides whether to increment (e.g., by user/IP + TTL).
  */
 export async function trackView(id: number | string): Promise<void> {
   await apiRequest(`/api/assets/${id}/track_view/`, { method: 'POST' }).catch(() => {});
 }
 
-/** 兼容旧名：内部直接转调 trackView */
+/** Legacy alias that simply calls trackView */
 export async function trackViewOnce(id: number | string): Promise<void> {
   return trackView(id);
 }
@@ -298,16 +389,16 @@ export async function uploadNewVersion(
     fd = fileOrForm;
   } else {
     fd = new FormData();
-    fd.append('file', fileOrForm as File); // 关键是 'file'
+    fd.append('file', fileOrForm as File); // important field name: 'file'
     if (note) fd.append('note', note);
   }
 
-  // 首选：/versions/
+  // Preferred: /versions/
   const v = await apiRequest<any>(`/api/assets/${assetId}/versions/`, {
     method: 'POST',
     body: fd,
-  }).catch(async (e) => {
-    // 兜底：兼容旧接口 /upload_version/
+  }).catch(async () => {
+    // Fallback for legacy backend: /upload_version/
     const alt = await apiRequest<any>(`/api/assets/${assetId}/upload_version/`, {
       method: 'POST',
       body: fd,
@@ -322,11 +413,11 @@ export async function restoreVersion(
   assetId: number | string,
   version: number
 ): Promise<AssetVersion> {
-  // 更新后的后端已提供 /versions/<ver>/restore/
+  // Preferred: /versions/<ver>/restore/
   const v = await apiRequest<any>(`/api/assets/${assetId}/versions/${version}/restore/`, {
     method: 'POST',
   }).catch(async () => {
-    // 兜底：兼容旧接口 /restore_version/?version=xx
+    // Fallback for legacy backend: /restore_version/?version=xx
     return await apiRequest<any>(
       `/api/assets/${assetId}/restore_version/?version=${encodeURIComponent(String(version))}`,
       { method: 'POST' }
@@ -336,7 +427,7 @@ export async function restoreVersion(
   return mapVersion(v);
 }
 
-// -------------------- 小工具 --------------------
+// -------------------- Utilities --------------------
 
 export function saveBlob(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob);

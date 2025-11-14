@@ -253,9 +253,7 @@ export default function LoginPage() {
             </form>
 
             <Box mt={2} borderTopWidth="1px" borderColor={PINK_BORDER} pt={3}>
-              <Text fontSize="xs" color="gray.700" textAlign="center">
-                Test accounts: admin / admin123, editor / editor123, viewer / viewer123
-              </Text>
+              
             </Box>
           </VStack>
         </Box>

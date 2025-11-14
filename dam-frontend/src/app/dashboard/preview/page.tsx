@@ -1,3 +1,4 @@
+/* FULL FILE: src/app/dashboard/preview/page.tsx */
 'use client';
 
 import VersionHistory from '@/components/VersionHistory';
@@ -20,18 +21,18 @@ import {
   trackView,
 } from '@/services/assets';
 import { authService } from '@/services/auth';
-import { BASE_URL } from '@/lib/api';
+import { BASE_URL, getAccessToken } from '@/lib/api';
 
-// ========== 主题常量（与 Users/Tags 页一致的粉色玻璃拟态） ==========
-const PINK_BG      = 'rgba(253, 242, 248, 0.80)';   // 背景
-const PINK_BG_ALT  = 'rgba(253, 242, 248, 0.92)';   // 行条纹
-const PINK_BORDER  = 'rgba(244, 114, 182, 0.45)';   // 边框
+// ===== Pink glassmorphism tokens (consistent with Users/Tags page) =====
+const PINK_BG      = 'rgba(253, 242, 248, 0.80)';   // card bg
+const PINK_BG_ALT  = 'rgba(253, 242, 248, 0.92)';   // zebra rows
+const PINK_BORDER  = 'rgba(244, 114, 182, 0.45)';   // border
 const PINK_SHADOW  = '0 18px 48px rgba(244, 114, 182, 0.25)';
 
-// 3D 预览
+// 3D preview (client-only)
 const ThreeDPreview = dynamic(() => import('@/components/ThreeDPreview'), { ssr: false });
 
-/** 霓虹按钮（白字、透明底、渐变描边） */
+/** Neon border button (white text, transparent bg, gradient border) */
 function NeonButton(props: React.ComponentProps<typeof Button>) {
   const { color, variant, ...rest } = props;
   return (
@@ -48,7 +49,7 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
         inset: 0,
         borderRadius: 'inherit',
         padding: '1px',
-        background: 'linear-gradient(90deg,#f472b6,#8b5cf6)', // 与用户页一致：粉→紫
+        background: 'linear-gradient(90deg,#f472b6,#8b5cf6)',
         WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         WebkitMaskComposite: 'xor',
         maskComposite: 'exclude',
@@ -65,7 +66,7 @@ function NeonButton(props: React.ComponentProps<typeof Button>) {
   );
 }
 
-/** 工具函数 */
+/** Helpers */
 function ensureAbsolute(u?: string): string {
   if (!u) return '';
   if (u.startsWith('http://') || u.startsWith('https://')) return u;
@@ -97,7 +98,7 @@ function ext(url?: string): string {
 }
 type TabKey = 'history' | 'upload';
 
-/** 资料行：左标签右值，避免 p 嵌套 p */
+/** Data row: left label, right value (avoid nesting <p> inside <p>) */
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Grid templateColumns="120px 1fr" columnGap={3} alignItems="center">
@@ -137,6 +138,16 @@ export default function PreviewPage() {
   const [file, setFile] = useState<File | null>(null);
   const [fatalPreviewErr, setFatalPreviewErr] = useState<string>('');
 
+  // PDF blob URL for inline embedding (with auth)
+  const [pdfObjectUrl, setPdfObjectUrl] = useState<string>('');
+
+  // Cleanup the created object URL when it changes/unmounts
+  useEffect(() => {
+    return () => {
+      if (pdfObjectUrl) URL.revokeObjectURL(pdfObjectUrl);
+    };
+  }, [pdfObjectUrl]);
+
   useEffect(() => {
     if (!assetId || Number.isNaN(assetId)) return;
     (async () => { const a = await getAssetById(assetId); setAsset(a); })();
@@ -149,6 +160,7 @@ export default function PreviewPage() {
       setLoadingPreview(true);
       setFatalPreviewErr('');
       try {
+        // View tracking (debounced in services)
         trackView(assetId)
           .then(() => setAsset(prev => (prev ? { ...prev, view_count: (prev.view_count ?? 0) + 1 } : prev)))
           .catch(() => {});
@@ -169,6 +181,36 @@ export default function PreviewPage() {
     return () => { mounted = false; };
   }, [assetId]);
 
+  // Load PDF as Blob (with Authorization header) and embed via objectURL.
+  // This avoids inline <object>/<iframe> failing when the server requires Bearer token.
+  const kind = useMemo(() => inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type), [fileUrl, asset]);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPdfBlob() {
+      if (kind !== 'pdf' || !fileUrl) {
+        setPdfObjectUrl('');
+        return;
+      }
+      try {
+        const token = getAccessToken();
+        const resp = await fetch(fileUrl, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'omit',
+        });
+        if (!resp.ok) throw new Error(`pdf preview ${resp.status}`);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        if (!cancelled) setPdfObjectUrl(url);
+      } catch {
+        if (!cancelled) setPdfObjectUrl('');
+      }
+    }
+
+    loadPdfBlob();
+    return () => { cancelled = true; };
+  }, [kind, fileUrl]);
+
   async function refreshVersions() {
     if (!assetId || Number.isNaN(assetId)) return;
     try {
@@ -183,7 +225,6 @@ export default function PreviewPage() {
   }
   useEffect(() => { refreshVersions(); /* eslint-disable-line */ }, [assetId]);
 
-  const kind = useMemo(() => inferKind(fileUrl, asset?.type ?? asset?.asset_type, asset?.mime_type), [fileUrl, asset]);
   const extname = useMemo(() => ext(fileUrl), [fileUrl]);
 
   async function onDownloadCurrent() {
@@ -259,7 +300,7 @@ export default function PreviewPage() {
 
   return (
     <Box p="24px" color="white">
-      {/* 顶部条 */}
+      {/* Header bar */}
       <Flex align="center" gap="12px" mb="16px">
         <NeonButton onClick={() => router.back()}>← Back</NeonButton>
         <Text fontSize="20px" fontWeight="bold" color="white">Asset Preview</Text>
@@ -269,7 +310,7 @@ export default function PreviewPage() {
         </NeonButton>
       </Flex>
 
-      {/* 错误提示（保持红色条） */}
+      {/* Error banner */}
       {fatalPreviewErr && !fileUrl && (
         <Box
           mt="12px"
@@ -285,7 +326,7 @@ export default function PreviewPage() {
         </Box>
       )}
 
-      {/* 信息 + 预览 —— 粉色玻璃卡片 */}
+      {/* Details + Preview card */}
       <Box
         border={`1px solid ${PINK_BORDER}`}
         borderRadius="20px"
@@ -297,7 +338,7 @@ export default function PreviewPage() {
         color="gray.900"
       >
         <Flex align="flex-start" gap="20px" wrap="wrap">
-          {/* 左侧资料 */}
+          {/* Left metadata */}
           <Box minW="320px" flex="0 0 360px">
             <SimpleGrid columns={1} gap={3}>
               <DetailRow label="Name:">{asset?.name ?? '-'}</DetailRow>
@@ -319,7 +360,7 @@ export default function PreviewPage() {
             </SimpleGrid>
           </Box>
 
-          {/* 右侧预览区（与卡片同风格） */}
+          {/* Right preview area */}
           <Box
             flex="1"
             minWidth="360px"
@@ -350,18 +391,22 @@ export default function PreviewPage() {
                   <NeonButton onClick={openPdfNewTab}>Open in new tab</NeonButton>
                   <NeonButton onClick={onDownloadCurrent}>Download PDF</NeonButton>
                 </Flex>
-                {fileUrl ? (
-                  <object data={fileUrl} type="application/pdf" width="100%" style={{ minHeight: 560 }}>
-                    <Box color="gray.700">
-                      Unable to embed PDF inline. You can{' '}
-                      <Button variant="plain" onClick={openPdfNewTab} p={0} h="auto" minW="unset">
-                        <Text as="span" textDecor="underline" color="blue.600">open it in a new tab</Text>
-                      </Button>{' '}
-                      or download above.
-                    </Box>
-                  </object>
+
+                {/* Prefer embedding via blob URL (auth-safe). Fallback to message if fetch failed. */}
+                {pdfObjectUrl ? (
+                  <iframe
+                    src={pdfObjectUrl}
+                    title="PDF Preview"
+                    style={{ width: '100%', minHeight: 560, border: 0, borderRadius: 12, background: 'white' }}
+                  />
                 ) : (
-                  <Box color="gray.700">No PDF preview available.</Box>
+                  <Box color="gray.700">
+                    Unable to embed PDF inline. You can{' '}
+                    <Button variant="plain" onClick={openPdfNewTab} p={0} h="auto" minW="unset">
+                      <Text as="span" textDecor="underline" color="blue.600">open it in a new tab</Text>
+                    </Button>{' '}
+                    or download above.
+                  </Box>
                 )}
               </Box>
             )}
@@ -377,13 +422,13 @@ export default function PreviewPage() {
         </Flex>
       </Box>
 
-      {/* Tabs（白字按钮） */}
+      {/* Tabs */}
       <Flex gap="8px" mb="12px">
         <NeonButton onClick={() => setActiveTab('history')}>Version History</NeonButton>
         {canWrite && <NeonButton onClick={() => setActiveTab('upload')}>Upload New Version</NeonButton>}
       </Flex>
 
-      {/* 历史版本表 —— 粉色玻璃表格，深色表头，条纹行 */}
+      {/* Version history table */}
       {activeTab === 'history' && (
         <Box
           border={`1px solid ${PINK_BORDER}`}
@@ -398,8 +443,8 @@ export default function PreviewPage() {
             <NeonButton onClick={refreshVersions} disabled={loadingList}>
               {loadingList ? 'Refreshing...' : 'Refresh'}
             </NeonButton>
-            <Text color="gray.700" fontSize="14px">最新在最上面</Text>
-            {versionsNote && <Text color="gray.700" fontSize="14px">（{versionsNote}）</Text>}
+            <Text color="gray.700" fontSize="14px">Latest Version</Text>
+            {versionsNote && <Text color="gray.700" fontSize="14px">({versionsNote})</Text>}
           </Flex>
 
           <Box as="table" w="100%" style={{ borderCollapse: 'collapse', fontSize: 14 }}>
@@ -457,7 +502,7 @@ export default function PreviewPage() {
         </Box>
       )}
 
-      {/* 上传新版本 —— 粉色卡片 */}
+      {/* Upload new version */}
       {activeTab === 'upload' && canWrite && (
         <Box
           border={`1px solid ${PINK_BORDER}`}
@@ -494,7 +539,9 @@ export default function PreviewPage() {
               Clear
             </Button>
           </Flex>
-          <Text mt="8px" fontSize="sm" color="gray.700">提交后，当前预览将自动指向新版本。</Text>
+          <Text mt="8px" fontSize="sm" color="gray.700">
+            After submitting, the preview will automatically switch to the new version.
+          </Text>
         </Box>
       )}
     </Box>
